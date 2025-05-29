@@ -1,82 +1,148 @@
+mod texture;
+mod ui;
+
+use cgmath::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 use wgpu::util::DeviceExt;
 use winit::{
     event::*,
     event_loop::EventLoop,
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::{KeyCode, ModifiersState, PhysicalKey},
     window::Window,
     window::WindowBuilder,
 };
+use ui::UiRenderer;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Tool {
+    Pen,
+    Rectangle,
+    Circle,
+    Arrow,
+    Text,
+    Eraser,
+    Select,
+}
+
+#[derive(Debug, Clone)]
+enum DrawingElement {
+    Stroke {
+        points: Vec<[f32; 2]>,
+        color: [f32; 4],
+        width: f32,
+    },
+    Rectangle {
+        position: [f32; 2],
+        size: [f32; 2],
+        color: [f32; 4],
+        fill: bool,
+        stroke_width: f32,
+    },
+    Circle {
+        center: [f32; 2],
+        radius: f32,
+        color: [f32; 4],
+        fill: bool,
+        stroke_width: f32,
+    },
+    Arrow {
+        start: [f32; 2],
+        end: [f32; 2],
+        color: [f32; 4],
+        width: f32,
+    },
+    Text {
+        position: [f32; 2],
+        content: String,
+        color: [f32; 4],
+        size: f32,
+    },
+}
+
+struct CanvasTransform {
+    offset: [f32; 2],
+    scale: f32,
+}
+
+impl CanvasTransform {
+    fn new() -> Self {
+        Self {
+            offset: [0.0, 0.0],
+            scale: 1.0,
+        }
+    }
+
+    fn screen_to_canvas(&self, screen_pos: [f32; 2]) -> [f32; 2] {
+        [
+            (screen_pos[0] - self.offset[0]) / self.scale,
+            (screen_pos[1] - self.offset[1]) / self.scale,
+        ]
+    }
+
+    fn canvas_to_screen(&self, canvas_pos: [f32; 2]) -> [f32; 2] {
+        [
+            canvas_pos[0] * self.scale + self.offset[0],
+            canvas_pos[1] * self.scale + self.offset[1],
+        ]
+    }
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    color: [f32; 3],
+pub struct Vertex {
+    position: [f32; 2],
+    color: [f32; 4],
 }
 
 impl Vertex {
     fn desc() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: wgpu::VertexFormat::Float32x2,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    offset: mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: wgpu::VertexFormat::Float32x4,
                 },
             ],
         }
     }
 }
 
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [-0.0868241, 0.49240386, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // A
-    Vertex {
-        position: [-0.49513406, 0.06958647, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // B
-    Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // E
-    Vertex {
-        position: [-0.49513406, 0.06958647, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // B
-    Vertex {
-        position: [-0.21918549, -0.44939706, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // C
-    Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // E
-    Vertex {
-        position: [-0.21918549, -0.44939706, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // C
-    Vertex {
-        position: [0.35966998, -0.3473291, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // D
-    Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // E
-];
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct Uniforms {
+    transform: [[f32; 4]; 4],
+}
 
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
+impl Uniforms {
+    fn new() -> Self {
+        Self {
+            transform: cgmath::Matrix4::identity().into(),
+        }
+    }
+
+    fn update_transform(&mut self, canvas_transform: &CanvasTransform, window_size: (f32, f32)) {
+        let proj = cgmath::ortho(0.0, window_size.0, window_size.1, 0.0, -1.0, 1.0);
+        
+        let translate = cgmath::Matrix4::from_translation(cgmath::Vector3::new(
+            canvas_transform.offset[0],
+            canvas_transform.offset[1],
+            0.0,
+        ));
+        let scale = cgmath::Matrix4::from_scale(canvas_transform.scale);
+        
+        self.transform = (proj * translate * scale).into();
+    }
+}
 
 struct State<'a> {
     surface: wgpu::Surface<'a>,
@@ -86,16 +152,46 @@ struct State<'a> {
     size: winit::dpi::PhysicalSize<u32>,
     window: &'a Window,
     render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_vertices: u32,
+    
+    // Drawing state
+    elements: Vec<DrawingElement>,
+    current_tool: Tool,
+    current_color: [f32; 4],
+    current_stroke_width: f32,
+    
+    // Canvas transform
+    canvas_transform: CanvasTransform,
+    
+    // Input state
+    mouse_pos: [f32; 2],
+    is_drawing: bool,
+    current_stroke: Vec<[f32; 2]>,
+    drag_start: Option<[f32; 2]>,
+    is_panning: bool,
+    pan_start: Option<([f32; 2], [f32; 2])>, // (mouse_pos, offset)
+    modifiers_state: ModifiersState,
+    
+    // Uniforms
+    uniforms: Uniforms,
+    uniform_buffer: wgpu::Buffer,
+    uniform_bind_group: wgpu::BindGroup,
+    
+    // Dynamic vertex buffer for drawing
+    vertex_buffer: Option<wgpu::Buffer>,
+    index_buffer: Option<wgpu::Buffer>,
+    num_indices: u32,
+    
+    // UI
+    ui_renderer: UiRenderer,
+    ui_vertex_buffer: Option<wgpu::Buffer>,
+    ui_index_buffer: Option<wgpu::Buffer>,
+    ui_num_indices: u32,
 }
 
 impl<'a> State<'a> {
     async fn new(window: &'a Window) -> State<'a> {
         let size = window.inner_size();
-        // The instance is a handle to our GPU
-        // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
+        
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
@@ -118,8 +214,6 @@ impl<'a> State<'a> {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::empty(),
-                // WebGL doesn't support all of wgpu's features, so if
-                // we're building for the web, we'll have to disable some.
                 required_limits: if cfg!(target_arch = "wasm32") {
                     wgpu::Limits::downlevel_webgl2_defaults()
                 } else {
@@ -133,15 +227,13 @@ impl<'a> State<'a> {
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-        // Shader code in this tutorial assumes an sRGB surface texture. Using a different
-        // one will result in all the colors coming out darker. If you want to support non
-        // sRGB surfaces, you'll need to account for that when drawing to the frame.
         let surface_format = surface_caps
             .formats
             .iter()
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
+            
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -153,121 +245,51 @@ impl<'a> State<'a> {
             desired_maximum_frame_latency: 2,
         };
 
-        let diffuse_bytes = include_bytes!("happy-tree.png");
-        let diffuse_image = image::load_from_memory(diffuse_bytes).unwrap();
-        let diffuse_rgba = diffuse_image.to_rgba8();
+        // Create uniforms
+        let mut uniforms = Uniforms::new();
+        let canvas_transform = CanvasTransform::new();
+        uniforms.update_transform(&canvas_transform, (size.width as f32, size.height as f32));
 
-        use image::GenericImageView;
-        let dimensions = diffuse_image.dimensions();
-
-        let texture_size = wgpu::Extent3d {
-            width: dimensions.0,
-            height: dimensions.1,
-            // All textures are stored as 3D, we represent our 2D texture
-            // by setting depth to 1.
-            depth_or_array_layers: 1,
-        };
-        let diffuse_texture = device.create_texture(&wgpu::TextureDescriptor {
-            size: texture_size,
-            mip_level_count: 1, // We'll talk about this a little later
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            // Most images are stored using sRGB, so we need to reflect that here.
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders
-            // COPY_DST means that we want to copy data to this texture
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            label: Some("diffuse_texture"),
-            // This is the same as with the SurfaceConfig. It
-            // specifies what texture formats can be used to
-            // create TextureViews for this texture. The base
-            // texture format (Rgba8UnormSrgb in this case) is
-            // always supported. Note that using a different
-            // texture format is not supported on the WebGL2
-            // backend.
-            view_formats: &[],
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[uniforms]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        queue.write_texture(
-            // Tells wgpu where to copy the pixel data
-            wgpu::TexelCopyTextureInfo {
-                texture: &diffuse_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            // The actual pixel data
-            &diffuse_rgba,
-            // The layout of the texture
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * dimensions.0),
-                rows_per_image: Some(dimensions.1),
-            },
-            texture_size,
-        );
-
-        let diffuse_texture_view =
-            diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        let texture_bind_group_layout =
+        let uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        // This should match the filterable field of the
-                        // corresponding Texture entry above.
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("texture_bind_group_layout"),
+                    count: None,
+                }],
+                label: Some("uniform_bind_group_layout"),
             });
 
-        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &uniform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+            label: Some("uniform_bind_group"),
         });
 
+        // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("draw_shader.wgsl").into()),
         });
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&uniform_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -276,57 +298,40 @@ impl<'a> State<'a> {
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"), // 1.
-                buffers: &[Vertex::desc()],   // 2.
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::desc()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                // 3.
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    // 4.
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList, // 1.
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw, // 2.
-                cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
                 polygon_mode: wgpu::PolygonMode::Fill,
-                // Requires Features::DEPTH_CLIP_CONTROL
                 unclipped_depth: false,
-                // Requires Features::CONSERVATIVE_RASTERIZATION
                 conservative: false,
             },
-            depth_stencil: None, // 1.
+            depth_stencil: None,
             multisample: wgpu::MultisampleState {
-                count: 1,                         // 2.
-                mask: !0,                         // 3.
-                alpha_to_coverage_enabled: false, // 4.
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
             },
-            multiview: None, // 5.
-            cache: None,     // 6.
+            multiview: None,
+            cache: None,
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let num_vertices = VERTICES.len() as u32;
+        surface.configure(&device, &config);
 
         Self {
             surface,
@@ -336,9 +341,28 @@ impl<'a> State<'a> {
             size,
             window,
             render_pipeline,
-            vertex_buffer,
-            index_buffer,
-            num_vertices,
+            elements: Vec::new(),
+            current_tool: Tool::Pen,
+            current_color: [0.0, 0.0, 0.0, 1.0], // Black
+            current_stroke_width: 2.0,
+            canvas_transform,
+            mouse_pos: [0.0, 0.0],
+            is_drawing: false,
+            current_stroke: Vec::new(),
+            drag_start: None,
+            is_panning: false,
+            pan_start: None,
+            modifiers_state: ModifiersState::empty(),
+            uniforms,
+            uniform_buffer,
+            uniform_bind_group,
+            vertex_buffer: None,
+            index_buffer: None,
+            num_indices: 0,
+            ui_renderer: UiRenderer::new(),
+            ui_vertex_buffer: None,
+            ui_index_buffer: None,
+            ui_num_indices: 0,
         }
     }
 
@@ -352,14 +376,654 @@ impl<'a> State<'a> {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            
+            // Update projection matrix
+            self.uniforms.update_transform(
+                &self.canvas_transform,
+                (new_size.width as f32, new_size.height as f32),
+            );
+            self.queue.write_buffer(
+                &self.uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[self.uniforms]),
+            );
         }
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
-        false
+        match event {
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers_state = modifiers.state();
+                false
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                match button {
+                    MouseButton::Left => {
+                        match state {
+                            ElementState::Pressed => {
+                                if let Some(tool) = self.ui_renderer.handle_click(self.mouse_pos) {
+                                    self.current_tool = tool;
+                                    return true;
+                                }
+                                
+                                if self.modifiers_state.shift_key() {
+                                    self.is_panning = true;
+                                    self.pan_start = Some((self.mouse_pos, self.canvas_transform.offset));
+                                } else {
+                                    self.is_drawing = true;
+                                    let canvas_pos = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                                    
+                                    match self.current_tool {
+                                        Tool::Pen => {
+                                            self.current_stroke.clear();
+                                            self.current_stroke.push(canvas_pos);
+                                        }
+                                        Tool::Rectangle | Tool::Circle | Tool::Arrow => {
+                                            self.drag_start = Some(canvas_pos);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            ElementState::Released => {
+                                if self.is_panning {
+                                    self.is_panning = false;
+                                    self.pan_start = None;
+                                } else if self.is_drawing {
+                                    self.is_drawing = false;
+                                    self.finish_drawing();
+                                }
+                            }
+                        }
+                        true
+                    }
+                    MouseButton::Middle => {
+                        match state {
+                            ElementState::Pressed => {
+                                self.is_panning = true;
+                                self.pan_start = Some((self.mouse_pos, self.canvas_transform.offset));
+                            }
+                            ElementState::Released => {
+                                self.is_panning = false;
+                                self.pan_start = None;
+                            }
+                        }
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.mouse_pos = [position.x as f32, position.y as f32];
+                
+                if self.is_panning {
+                    if let Some((start_mouse, start_offset)) = self.pan_start {
+                        self.canvas_transform.offset[0] = start_offset[0] + (self.mouse_pos[0] - start_mouse[0]);
+                        self.canvas_transform.offset[1] = start_offset[1] + (self.mouse_pos[1] - start_mouse[1]);
+                        
+                        self.uniforms.update_transform(
+                            &self.canvas_transform,
+                            (self.size.width as f32, self.size.height as f32),
+                        );
+                        self.queue.write_buffer(
+                            &self.uniform_buffer,
+                            0,
+                            bytemuck::cast_slice(&[self.uniforms]),
+                        );
+                    }
+                } else if self.is_drawing && self.current_tool == Tool::Pen {
+                    let canvas_pos = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                    self.current_stroke.push(canvas_pos);
+                }
+                true
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let zoom_factor = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => 1.0 + y * 0.1,
+                    MouseScrollDelta::PixelDelta(pos) => 1.0 + pos.y as f32 * 0.001,
+                };
+                
+                let mouse_canvas_before = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                self.canvas_transform.scale *= zoom_factor;
+                self.canvas_transform.scale = self.canvas_transform.scale.clamp(0.1, 10.0);
+                let mouse_canvas_after = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                
+                self.canvas_transform.offset[0] += (mouse_canvas_after[0] - mouse_canvas_before[0]) * self.canvas_transform.scale;
+                self.canvas_transform.offset[1] += (mouse_canvas_after[1] - mouse_canvas_before[1]) * self.canvas_transform.scale;
+                
+                self.uniforms.update_transform(
+                    &self.canvas_transform,
+                    (self.size.width as f32, self.size.height as f32),
+                );
+                self.queue.write_buffer(
+                    &self.uniform_buffer,
+                    0,
+                    bytemuck::cast_slice(&[self.uniforms]),
+                );
+                
+                true
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(keycode),
+                        ..
+                    },
+                ..
+            } => {
+                let is_ctrl_or_cmd = self.modifiers_state.control_key() || self.modifiers_state.super_key();
+                match keycode {
+                    KeyCode::Digit1 => {
+                        self.current_tool = Tool::Select;
+                        true
+                    }
+                    KeyCode::Digit2 => {
+                        self.current_tool = Tool::Pen;
+                        true
+                    }
+                    KeyCode::Digit3 => {
+                        self.current_tool = Tool::Rectangle;
+                        true
+                    }
+                    KeyCode::Digit4 => {
+                        self.current_tool = Tool::Circle;
+                        true
+                    }
+                    KeyCode::Digit5 => {
+                        self.current_tool = Tool::Arrow;
+                        true
+                    }
+                    KeyCode::Digit6 => {
+                        self.current_tool = Tool::Text;
+                        true
+                    }
+                    KeyCode::Digit7 => {
+                        self.current_tool = Tool::Eraser;
+                        true
+                    }
+                    KeyCode::KeyC => {
+                        // Clear canvas
+                        self.elements.clear();
+                        true
+                    }
+                    KeyCode::KeyZ => {
+                        // Undo (simple version - remove last element)
+                        if is_ctrl_or_cmd {
+                            self.elements.pop();
+                        }
+                        true
+                    }
+                    KeyCode::Minus => {
+                        if is_ctrl_or_cmd {
+                            self.canvas_transform.scale /= 1.1;
+                            self.canvas_transform.scale = self.canvas_transform.scale.clamp(0.1, 10.0);
+                            self.uniforms.update_transform(
+                                &self.canvas_transform,
+                                (self.size.width as f32, self.size.height as f32),
+                            );
+                            self.queue.write_buffer(
+                                &self.uniform_buffer,
+                                0,
+                                bytemuck::cast_slice(&[self.uniforms]),
+                            );
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    KeyCode::Equal => {
+                        if is_ctrl_or_cmd {
+                            self.canvas_transform.scale *= 1.1;
+                            self.canvas_transform.scale = self.canvas_transform.scale.clamp(0.1, 10.0);
+                            self.uniforms.update_transform(
+                                &self.canvas_transform,
+                                (self.size.width as f32, self.size.height as f32),
+                            );
+                            self.queue.write_buffer(
+                                &self.uniform_buffer,
+                                0,
+                                bytemuck::cast_slice(&[self.uniforms]),
+                            );
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
     }
 
-    fn update(&mut self) {}
+    fn finish_drawing(&mut self) {
+        let element = match self.current_tool {
+            Tool::Pen => {
+                if self.current_stroke.len() > 1 {
+                    Some(DrawingElement::Stroke {
+                        points: self.current_stroke.clone(),
+                        color: self.current_color,
+                        width: self.current_stroke_width,
+                    })
+                } else {
+                    None
+                }
+            }
+            Tool::Rectangle => {
+                if let Some(start) = self.drag_start {
+                    let end = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                    let position = [start[0].min(end[0]), start[1].min(end[1])];
+                    let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
+                    
+                    Some(DrawingElement::Rectangle {
+                        position,
+                        size,
+                        color: self.current_color,
+                        fill: false,
+                        stroke_width: self.current_stroke_width,
+                    })
+                } else {
+                    None
+                }
+            }
+            Tool::Circle => {
+                if let Some(start) = self.drag_start {
+                    let end = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                    let radius = ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt();
+                    
+                    Some(DrawingElement::Circle {
+                        center: start,
+                        radius,
+                        color: self.current_color,
+                        fill: false,
+                        stroke_width: self.current_stroke_width,
+                    })
+                } else {
+                    None
+                }
+            }
+            Tool::Arrow => {
+                if let Some(start) = self.drag_start {
+                    let end = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                    
+                    Some(DrawingElement::Arrow {
+                        start,
+                        end,
+                        color: self.current_color,
+                        width: self.current_stroke_width,
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        
+        if let Some(element) = element {
+            self.elements.push(element);
+        }
+        
+        self.current_stroke.clear();
+        self.drag_start = None;
+    }
+
+    fn update(&mut self) {
+        self.update_buffers();
+        
+        let (ui_vertices, ui_indices) = self.ui_renderer.generate_ui_vertices(self.current_tool);
+        
+        if !ui_vertices.is_empty() {
+            self.ui_vertex_buffer = Some(self.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("UI Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&ui_vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                },
+            ));
+            
+            self.ui_index_buffer = Some(self.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("UI Index Buffer"),
+                    contents: bytemuck::cast_slice(&ui_indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                },
+            ));
+            
+            self.ui_num_indices = ui_indices.len() as u32;
+        }
+    }
+
+    fn update_buffers(&mut self) {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let mut index_offset = 0u16;
+
+        for element in &self.elements {
+            match element {
+                DrawingElement::Stroke { points, color, width } => {
+                    for i in 0..points.len().saturating_sub(1) {
+                        let p1 = points[i];
+                        let p2 = points[i + 1];
+                        
+                        let dx = p2[0] - p1[0];
+                        let dy = p2[1] - p1[1];
+                        let len = (dx * dx + dy * dy).sqrt();
+                        if len > 0.0 {
+                            let nx = -dy / len * width * 0.5;
+                            let ny = dx / len * width * 0.5;
+                            
+                            vertices.push(Vertex {
+                                position: [p1[0] - nx, p1[1] - ny],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [p1[0] + nx, p1[1] + ny],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [p2[0] + nx, p2[1] + ny],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [p2[0] - nx, p2[1] - ny],
+                                color: *color,
+                            });
+                            
+                            indices.extend_from_slice(&[
+                                index_offset, index_offset + 1, index_offset + 2,
+                                index_offset, index_offset + 2, index_offset + 3,
+                            ]);
+                            index_offset += 4;
+                        }
+                    }
+                }
+                DrawingElement::Rectangle { position, size, color, fill, stroke_width } => {
+                    if *fill {
+                        vertices.push(Vertex {
+                            position: *position,
+                            color: *color,
+                        });
+                        vertices.push(Vertex {
+                            position: [position[0] + size[0], position[1]],
+                            color: *color,
+                        });
+                        vertices.push(Vertex {
+                            position: [position[0] + size[0], position[1] + size[1]],
+                            color: *color,
+                        });
+                        vertices.push(Vertex {
+                            position: [position[0], position[1] + size[1]],
+                            color: *color,
+                        });
+                        
+                        indices.extend_from_slice(&[
+                            index_offset, index_offset + 1, index_offset + 2,
+                            index_offset, index_offset + 2, index_offset + 3,
+                        ]);
+                        index_offset += 4;
+                    } else {
+                        let corners = [
+                            *position,
+                            [position[0] + size[0], position[1]],
+                            [position[0] + size[0], position[1] + size[1]],
+                            [position[0], position[1] + size[1]],
+                        ];
+                        
+                        for i in 0..4 {
+                            let p1 = corners[i];
+                            let p2 = corners[(i + 1) % 4];
+                            
+                            let dx = p2[0] - p1[0];
+                            let dy = p2[1] - p1[1];
+                            let len = (dx * dx + dy * dy).sqrt();
+                            if len > 0.0 {
+                                let nx = -dy / len * stroke_width * 0.5;
+                                let ny = dx / len * stroke_width * 0.5;
+                                
+                                vertices.push(Vertex {
+                                    position: [p1[0] - nx, p1[1] - ny],
+                                    color: *color,
+                                });
+                                vertices.push(Vertex {
+                                    position: [p1[0] + nx, p1[1] + ny],
+                                    color: *color,
+                                });
+                                vertices.push(Vertex {
+                                    position: [p2[0] + nx, p2[1] + ny],
+                                    color: *color,
+                                });
+                                vertices.push(Vertex {
+                                    position: [p2[0] - nx, p2[1] - ny],
+                                    color: *color,
+                                });
+                                
+                                indices.extend_from_slice(&[
+                                    index_offset, index_offset + 1, index_offset + 2,
+                                    index_offset, index_offset + 2, index_offset + 3,
+                                ]);
+                                index_offset += 4;
+                            }
+                        }
+                    }
+                }
+                DrawingElement::Circle { center, radius, color, fill, stroke_width } => {
+                    const SEGMENTS: u32 = 32;
+                    
+                    if *fill {
+                        let center_index = index_offset;
+                        vertices.push(Vertex {
+                            position: *center,
+                            color: *color,
+                        });
+                        index_offset += 1;
+                        
+                        for i in 0..SEGMENTS {
+                            let angle = (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
+                            vertices.push(Vertex {
+                                position: [
+                                    center[0] + angle.cos() * radius,
+                                    center[1] + angle.sin() * radius,
+                                ],
+                                color: *color,
+                            });
+                        }
+                        
+                        for i in 0..SEGMENTS {
+                            indices.extend_from_slice(&[
+                                center_index,
+                                center_index + 1 + i as u16,
+                                center_index + 1 + ((i + 1) % SEGMENTS) as u16,
+                            ]);
+                        }
+                        index_offset += SEGMENTS as u16;
+                    } else {
+                        for i in 0..SEGMENTS {
+                            let angle1 = (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
+                            let angle2 = ((i + 1) as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
+                            
+                            let p1 = [
+                                center[0] + angle1.cos() * radius,
+                                center[1] + angle1.sin() * radius,
+                            ];
+                            let p2 = [
+                                center[0] + angle2.cos() * radius,
+                                center[1] + angle2.sin() * radius,
+                            ];
+                            
+                            // Create thick line segment
+                            let dx = p2[0] - p1[0];
+                            let dy = p2[1] - p1[1];
+                            let len = (dx * dx + dy * dy).sqrt();
+                            if len > 0.0 {
+                                let nx = -dy / len * stroke_width * 0.5;
+                                let ny = dx / len * stroke_width * 0.5;
+                                
+                                vertices.push(Vertex {
+                                    position: [p1[0] - nx, p1[1] - ny],
+                                    color: *color,
+                                });
+                                vertices.push(Vertex {
+                                    position: [p1[0] + nx, p1[1] + ny],
+                                    color: *color,
+                                });
+                                vertices.push(Vertex {
+                                    position: [p2[0] + nx, p2[1] + ny],
+                                    color: *color,
+                                });
+                                vertices.push(Vertex {
+                                    position: [p2[0] - nx, p2[1] - ny],
+                                    color: *color,
+                                });
+                                
+                                indices.extend_from_slice(&[
+                                    index_offset, index_offset + 1, index_offset + 2,
+                                    index_offset, index_offset + 2, index_offset + 3,
+                                ]);
+                                index_offset += 4;
+                            }
+                        }
+                    }
+                }
+                DrawingElement::Arrow { start, end, color, width } => {
+                    let dx = end[0] - start[0];
+                    let dy = end[1] - start[1];
+                    let len = (dx * dx + dy * dy).sqrt();
+                    
+                    if len > 0.0 {
+                        let nx = -dy / len * width * 0.5;
+                        let ny = dx / len * width * 0.5;
+                        
+                        vertices.push(Vertex {
+                            position: [start[0] - nx, start[1] - ny],
+                            color: *color,
+                        });
+                        vertices.push(Vertex {
+                            position: [start[0] + nx, start[1] + ny],
+                            color: *color,
+                        });
+                        vertices.push(Vertex {
+                            position: [end[0] + nx, end[1] + ny],
+                            color: *color,
+                        });
+                        vertices.push(Vertex {
+                            position: [end[0] - nx, end[1] - ny],
+                            color: *color,
+                        });
+                        
+                        indices.extend_from_slice(&[
+                            index_offset, index_offset + 1, index_offset + 2,
+                            index_offset, index_offset + 2, index_offset + 3,
+                        ]);
+                        index_offset += 4;
+                        
+                        // Arrowhead
+                        let head_len = 15.0_f32.min(len * 0.3);
+                        let head_width = width * 3.0;
+                        
+                        let dir_x = dx / len;
+                        let dir_y = dy / len;
+                        
+                        let base_x = end[0] - dir_x * head_len;
+                        let base_y = end[1] - dir_y * head_len;
+                        
+                        vertices.push(Vertex {
+                            position: *end,
+                            color: *color,
+                        });
+                        vertices.push(Vertex {
+                            position: [base_x - dir_y * head_width * 0.5, base_y + dir_x * head_width * 0.5],
+                            color: *color,
+                        });
+                        vertices.push(Vertex {
+                            position: [base_x + dir_y * head_width * 0.5, base_y - dir_x * head_width * 0.5],
+                            color: *color,
+                        });
+                        
+                        indices.extend_from_slice(&[
+                            index_offset + 4, index_offset + 5, index_offset + 6,
+                        ]);
+                        index_offset += 7;
+                    }
+                }
+                DrawingElement::Text { .. } => {
+                    // TODO: Implement text rendering
+                }
+            }
+        }
+
+        if self.is_drawing {
+            match self.current_tool {
+                Tool::Pen => {
+                    if self.current_stroke.len() > 1 {
+                        for i in 0..self.current_stroke.len().saturating_sub(1) {
+                            let p1 = self.current_stroke[i];
+                            let p2 = self.current_stroke[i + 1];
+                            
+                            let dx = p2[0] - p1[0];
+                            let dy = p2[1] - p1[1];
+                            let len = (dx * dx + dy * dy).sqrt();
+                            if len > 0.0 {
+                                let nx = -dy / len * self.current_stroke_width * 0.5;
+                                let ny = dx / len * self.current_stroke_width * 0.5;
+                                
+                                vertices.push(Vertex {
+                                    position: [p1[0] - nx, p1[1] - ny],
+                                    color: self.current_color,
+                                });
+                                vertices.push(Vertex {
+                                    position: [p1[0] + nx, p1[1] + ny],
+                                    color: self.current_color,
+                                });
+                                vertices.push(Vertex {
+                                    position: [p2[0] + nx, p2[1] + ny],
+                                    color: self.current_color,
+                                });
+                                vertices.push(Vertex {
+                                    position: [p2[0] - nx, p2[1] - ny],
+                                    color: self.current_color,
+                                });
+                                
+                                indices.extend_from_slice(&[
+                                    index_offset, index_offset + 1, index_offset + 2,
+                                    index_offset, index_offset + 2, index_offset + 3,
+                                ]);
+                                index_offset += 4;
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // TODO: Implement other tools
+                }
+            }
+        }
+
+        // Update GPU buffers
+        if !vertices.is_empty() {
+            self.vertex_buffer = Some(self.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                },
+            ));
+            
+            self.index_buffer = Some(self.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("Index Buffer"),
+                    contents: bytemuck::cast_slice(&indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                },
+            ));
+            
+            self.num_indices = indices.len() as u32;
+        } else {
+            self.vertex_buffer = None;
+            self.index_buffer = None;
+            self.num_indices = 0;
+        }
+    }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
@@ -381,9 +1045,9 @@ impl<'a> State<'a> {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
+                            r: 1.0,
+                            g: 1.0,
+                            b: 1.0,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -395,9 +1059,36 @@ impl<'a> State<'a> {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw(0..self.num_vertices, 0..1);
+            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            
+            if let (Some(vertex_buffer), Some(index_buffer)) = (&self.vertex_buffer, &self.index_buffer) {
+                render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            }
+            
+            let mut ui_uniforms = Uniforms::new();
+            ui_uniforms.update_transform(
+                &CanvasTransform::new(),
+                (self.size.width as f32, self.size.height as f32),
+            );
+            self.queue.write_buffer(
+                &self.uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[ui_uniforms]),
+            );
+            
+            if let (Some(ui_vertex_buffer), Some(ui_index_buffer)) = (&self.ui_vertex_buffer, &self.ui_index_buffer) {
+                render_pass.set_vertex_buffer(0, ui_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(ui_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.ui_num_indices, 0, 0..1);
+            }
+            
+            self.queue.write_buffer(
+                &self.uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[self.uniforms]),
+            );
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -412,20 +1103,24 @@ pub async fn run() {
     cfg_if::cfg_if! {
         if #[cfg(target_arch = "wasm32")] {
             std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-            console_log::init_with_level(log::Level::Warn).expect("Couldn't initialize logger");
+            console_log::init_with_level(log::Level::Info).expect("Couldn't initialize logger");
         } else {
             env_logger::init();
         }
     }
+
     let event_loop = EventLoop::new().unwrap();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
+    let window = WindowBuilder::new()
+        .with_title("wcanvas")
+        .build(&event_loop)
+        .unwrap();
 
     #[cfg(target_arch = "wasm32")]
     {
         // Winit prevents sizing with CSS, so we have to set
         // the size manually when on web.
         use winit::dpi::PhysicalSize;
-        let _ = window.request_inner_size(PhysicalSize::new(450, 400));
+        let _ = window.request_inner_size(PhysicalSize::new(800, 600));
 
         use winit::platform::web::WindowExtWebSys;
         web_sys::window()
@@ -440,65 +1135,47 @@ pub async fn run() {
     }
 
     let mut state = State::new(&window).await;
-    let mut surface_configured = false;
 
-    // run()
-    event_loop.run(move |event, control_flow| {
-        match event {
-            Event::WindowEvent {
-                ref event,
-                window_id,
-            } if window_id == state.window().id() => {
-                if !state.input(event) {
-                    // UPDATED!
-                    match event {
-                        WindowEvent::CloseRequested
-                        | WindowEvent::KeyboardInput {
-                            event:
-                                KeyEvent {
-                                    state: ElementState::Pressed,
-                                    physical_key: PhysicalKey::Code(KeyCode::Escape),
-                                    ..
-                                },
-                            ..
-                        } => control_flow.exit(),
-                        WindowEvent::Resized(physical_size) => {
-                            surface_configured = true;
-                            state.resize(*physical_size);
-                        }
-                        WindowEvent::RedrawRequested => {
-                            state.window().request_redraw();
-
-                            if !surface_configured {
-                                return;
+    event_loop
+        .run(move |event, control_flow| {
+            match event {
+                Event::WindowEvent {
+                    ref event,
+                    window_id,
+                } if window_id == state.window().id() => {
+                    if !state.input(event) {
+                        match event {
+                            WindowEvent::CloseRequested
+                            | WindowEvent::KeyboardInput {
+                                event:
+                                    KeyEvent {
+                                        state: ElementState::Pressed,
+                                        physical_key: PhysicalKey::Code(KeyCode::Escape),
+                                        ..
+                                    },
+                                ..
+                            } => control_flow.exit(),
+                            WindowEvent::Resized(physical_size) => {
+                                state.resize(*physical_size);
                             }
-
-                            state.update();
-                            match state.render() {
-                                Ok(_) => {}
-                                // Reconfigure the surface if it's lost or outdated
-                                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                                    state.resize(state.size)
-                                }
-                                // The system is out of memory, we should probably quit
-                                Err(
-                                    wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other,
-                                ) => {
-                                    log::error!("OutOfMemory");
-                                    control_flow.exit();
-                                }
-
-                                // This happens when the a frame takes too long to present
-                                Err(wgpu::SurfaceError::Timeout) => {
-                                    log::warn!("Surface timeout")
+                            WindowEvent::RedrawRequested => {
+                                state.update();
+                                match state.render() {
+                                    Ok(_) => {}
+                                    Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+                                    Err(wgpu::SurfaceError::OutOfMemory) => control_flow.exit(),
+                                    Err(e) => eprintln!("{:?}", e),
                                 }
                             }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
+                Event::AboutToWait => {
+                    state.window().request_redraw();
+                }
+                _ => {}
             }
-            _ => {}
-        }
-    });
+        })
+        .unwrap();
 }
