@@ -1809,6 +1809,7 @@ dependencies = [
 name = "wcanvas"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "anyhow",
  "bytemuck",
  "cfg-if",
