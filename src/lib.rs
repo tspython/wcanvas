@@ -499,14 +499,17 @@ impl<'a> State<'a> {
 
                 if self.is_typing {
                     if let Some(txt) = &key_event.text {
+                        let mut added_visible = false;
                         for ch in txt.chars() {
                             if !ch.is_control() {
                                 self.text_input_buffer.push(ch);
-                                self.cursor_visible = true;
-                                self.cursor_blink_timer = std::time::Instant::now();
+                                added_visible = true;
                             }
                         }
-                        if !txt.is_empty() {
+
+                        if added_visible {
+                            self.cursor_visible = true;
+                            self.cursor_blink_timer = std::time::Instant::now();
                             return true;
                         }
                     }
@@ -545,7 +548,6 @@ impl<'a> State<'a> {
                             }
                             false
                         }
-                        // --- existing tool shortcuts ---
                         winit::keyboard::KeyCode::Digit1 => {
                             self.current_tool = Tool::Select;
                             true

@@ -258,7 +258,7 @@ impl TextRenderer {
                         (self.next_y + h) as f32 / 1024.0,
                     ],
                     size: [w as f32, h as f32],
-                    bearing: [bb.min.x, bb.min.y], // top‑left bearing
+                    bearing: [bb.min.x, bb.min.y],
                     advance: self.font.h_advance_unscaled(gl.id),
                 };
 
