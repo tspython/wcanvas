@@ -1,13 +1,19 @@
+mod canvas;
 mod drawing;
+mod state;
 mod text_renderer;
 mod texture;
 mod ui;
 
+use canvas::CanvasTransform;
+use canvas::Uniforms;
 use cgmath::prelude::*;
 use drawing::{DrawingElement, Tool};
+use state::{Canvas, GeometryBuffers, GpuContext, InputState, TextInput, UiBuffers};
 use text_renderer::TextRenderer;
 use ui::UiRenderer;
 
+use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 use wgpu::util::DeviceExt;
@@ -18,34 +24,6 @@ use winit::{
     window::Window,
     window::WindowBuilder,
 };
-
-struct CanvasTransform {
-    offset: [f32; 2],
-    scale: f32,
-}
-
-impl CanvasTransform {
-    fn new() -> Self {
-        Self {
-            offset: [0.0, 0.0],
-            scale: 1.0,
-        }
-    }
-
-    fn screen_to_canvas(&self, screen_pos: [f32; 2]) -> [f32; 2] {
-        [
-            (screen_pos[0] - self.offset[0]) / self.scale,
-            (screen_pos[1] - self.offset[1]) / self.scale,
-        ]
-    }
-
-    fn canvas_to_screen(&self, canvas_pos: [f32; 2]) -> [f32; 2] {
-        [
-            canvas_pos[0] * self.scale + self.offset[0],
-            canvas_pos[1] * self.scale + self.offset[1],
-        ]
-    }
-}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -76,77 +54,24 @@ impl Vertex {
     }
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Uniforms {
-    transform: [[f32; 4]; 4],
-}
-
-impl Uniforms {
-    fn new() -> Self {
-        Self {
-            transform: cgmath::Matrix4::identity().into(),
-        }
-    }
-
-    fn update_transform(&mut self, canvas_transform: &CanvasTransform, window_size: (f32, f32)) {
-        let proj = cgmath::ortho(0.0, window_size.0, window_size.1, 0.0, -1.0, 1.0);
-
-        let translate = cgmath::Matrix4::from_translation(cgmath::Vector3::new(
-            canvas_transform.offset[0],
-            canvas_transform.offset[1],
-            0.0,
-        ));
-        let scale = cgmath::Matrix4::from_scale(canvas_transform.scale);
-
-        self.transform = (proj * translate * scale).into();
-    }
-}
-
 struct State<'a> {
-    surface: wgpu::Surface<'a>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    size: winit::dpi::PhysicalSize<u32>,
     window: &'a Window,
-    render_pipeline: wgpu::RenderPipeline,
+    size: winit::dpi::PhysicalSize<u32>,
+
+    gpu: GpuContext<'a>,
+    canvas: Canvas,
+    geometry: GeometryBuffers,
+    ui_geo: UiBuffers,
+    input: InputState,
+    typing: TextInput,
 
     elements: Vec<DrawingElement>,
     current_tool: Tool,
     current_color: [f32; 4],
-    current_stroke_width: f32,
-
-    canvas_transform: CanvasTransform,
-
-    mouse_pos: [f32; 2],
-    is_drawing: bool,
-    current_stroke: Vec<[f32; 2]>,
-    drag_start: Option<[f32; 2]>,
-    is_panning: bool,
-    pan_start: Option<([f32; 2], [f32; 2])>,
-    modifiers_state: ModifiersState,
-
-    uniforms: Uniforms,
-    uniform_buffer: wgpu::Buffer,
-    uniform_bind_group: wgpu::BindGroup,
-
-    vertex_buffer: Option<wgpu::Buffer>,
-    index_buffer: Option<wgpu::Buffer>,
-    num_indices: u32,
+    stroke_width: f32,
 
     ui_renderer: UiRenderer,
-    ui_vertex_buffer: Option<wgpu::Buffer>,
-    ui_index_buffer: Option<wgpu::Buffer>,
-    ui_num_indices: u32,
-
     text_renderer: TextRenderer,
-
-    is_typing: bool,
-    text_input_buffer: String,
-    text_input_position: [f32; 2],
-    cursor_visible: bool,
-    cursor_blink_timer: std::time::Instant,
 }
 
 impl<'a> State<'a> {
@@ -296,42 +221,68 @@ impl<'a> State<'a> {
 
         let text_renderer = TextRenderer::new(&device, &queue, config.format);
 
-        Self {
+        let gpu = GpuContext {
             surface,
             device,
             queue,
             config,
-            size,
-            window,
             render_pipeline,
-            elements: Vec::new(),
-            current_tool: Tool::Pen,
-            current_color: [0.0, 0.0, 0.0, 1.0], // Black
-            current_stroke_width: 2.0,
-            canvas_transform,
-            mouse_pos: [0.0, 0.0],
+        };
+
+        let canvas = Canvas {
+            transform: canvas_transform,
+            uniform: uniforms,
+            uniform_buffer,
+            uniform_bind_group,
+        };
+
+        let geometry = GeometryBuffers {
+            vertex: None,
+            index: None,
+            count: 0,
+        };
+
+        let ui_geo = UiBuffers {
+            vertex: None,
+            index: None,
+            count: 0,
+        };
+
+        let input = InputState {
+            mouse_pos: [0.0; 2],
+            modifiers: ModifiersState::empty(),
+
+            is_panning: false,
+            pan_start: None,
+
             is_drawing: false,
             current_stroke: Vec::new(),
             drag_start: None,
-            is_panning: false,
-            pan_start: None,
-            modifiers_state: ModifiersState::empty(),
-            uniforms,
-            uniform_buffer,
-            uniform_bind_group,
-            vertex_buffer: None,
-            index_buffer: None,
-            num_indices: 0,
-            ui_renderer: UiRenderer::new(),
-            ui_vertex_buffer: None,
-            ui_index_buffer: None,
-            ui_num_indices: 0,
-            text_renderer,
-            is_typing: false,
-            text_input_buffer: String::new(),
-            text_input_position: [0.0, 0.0],
+        };
+
+        let typing = TextInput {
+            active: false,
+            buffer: String::new(),
+            pos_canvas: [0.0; 2],
             cursor_visible: true,
-            cursor_blink_timer: std::time::Instant::now(),
+            blink_timer: Instant::now(),
+        };
+
+        Self {
+            window,
+            size,
+            gpu,
+            canvas,
+            geometry,
+            ui_geo,
+            input,
+            typing,
+            elements: Vec::new(),
+            current_tool: Tool::Pen,
+            current_color: [0.0, 0.0, 0.0, 1.0],
+            stroke_width: 2.0,
+            ui_renderer: UiRenderer::new(),
+            text_renderer,
         }
     }
 
@@ -342,18 +293,20 @@ impl<'a> State<'a> {
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
+            self.gpu.config.width = new_size.width;
+            self.gpu.config.height = new_size.height;
+            self.gpu
+                .surface
+                .configure(&self.gpu.device, &self.gpu.config);
 
-            self.uniforms.update_transform(
-                &self.canvas_transform,
+            self.canvas.uniform.update_transform(
+                &self.canvas.transform,
                 (new_size.width as f32, new_size.height as f32),
             );
-            self.queue.write_buffer(
-                &self.uniform_buffer,
+            self.gpu.queue.write_buffer(
+                &self.canvas.uniform_buffer,
                 0,
-                bytemuck::cast_slice(&[self.uniforms]),
+                bytemuck::cast_slice(&[self.canvas.uniform]),
             );
         }
     }
@@ -361,7 +314,7 @@ impl<'a> State<'a> {
     fn input(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers_state = modifiers.state();
+                self.input.modifiers = modifiers.state();
                 false
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -369,38 +322,43 @@ impl<'a> State<'a> {
                     MouseButton::Left => {
                         match state {
                             ElementState::Pressed => {
-                                if let Some(tool) = self.ui_renderer.handle_click(self.mouse_pos) {
+                                if let Some(tool) =
+                                    self.ui_renderer.handle_click(self.input.mouse_pos)
+                                {
                                     self.current_tool = tool;
                                     return true;
                                 }
 
-                                if self.modifiers_state.shift_key() {
-                                    self.is_panning = true;
-                                    self.pan_start =
-                                        Some((self.mouse_pos, self.canvas_transform.offset));
+                                if self.input.modifiers.shift_key() {
+                                    self.input.is_panning = true;
+                                    self.input.pan_start =
+                                        Some((self.input.mouse_pos, self.canvas.transform.offset));
                                 } else {
-                                    self.is_drawing = true;
-                                    let canvas_pos =
-                                        self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                                    self.input.is_drawing = true;
+                                    let canvas_pos = self
+                                        .canvas
+                                        .transform
+                                        .screen_to_canvas(self.input.mouse_pos);
 
                                     match self.current_tool {
                                         Tool::Pen => {
-                                            self.current_stroke.clear();
-                                            self.current_stroke.push(canvas_pos);
+                                            self.input.current_stroke.clear();
+                                            self.input.current_stroke.push(canvas_pos);
                                         }
                                         Tool::Rectangle | Tool::Circle | Tool::Arrow => {
-                                            self.drag_start = Some(canvas_pos);
+                                            self.input.drag_start = Some(canvas_pos);
                                         }
                                         Tool::Text => {
                                             let canvas_pos = self
-                                                .canvas_transform
-                                                .screen_to_canvas(self.mouse_pos);
+                                                .canvas
+                                                .transform
+                                                .screen_to_canvas(self.input.mouse_pos);
                                             // Start text input mode
-                                            self.is_typing = true;
-                                            self.text_input_position = canvas_pos;
-                                            self.text_input_buffer.clear();
-                                            self.cursor_visible = true;
-                                            self.cursor_blink_timer = std::time::Instant::now();
+                                            self.typing.active = true;
+                                            self.typing.pos_canvas = canvas_pos;
+                                            self.typing.buffer.clear();
+                                            self.typing.cursor_visible = true;
+                                            self.typing.blink_timer = std::time::Instant::now();
                                             return true;
                                         }
                                         _ => {}
@@ -408,11 +366,11 @@ impl<'a> State<'a> {
                                 }
                             }
                             ElementState::Released => {
-                                if self.is_panning {
-                                    self.is_panning = false;
-                                    self.pan_start = None;
-                                } else if self.is_drawing {
-                                    self.is_drawing = false;
+                                if self.input.is_panning {
+                                    self.input.is_panning = false;
+                                    self.input.pan_start = None;
+                                } else if self.input.is_drawing {
+                                    self.input.is_drawing = false;
                                     self.finish_drawing();
                                 }
                             }
@@ -422,13 +380,13 @@ impl<'a> State<'a> {
                     MouseButton::Middle => {
                         match state {
                             ElementState::Pressed => {
-                                self.is_panning = true;
-                                self.pan_start =
-                                    Some((self.mouse_pos, self.canvas_transform.offset));
+                                self.input.is_panning = true;
+                                self.input.pan_start =
+                                    Some((self.input.mouse_pos, self.canvas.transform.offset));
                             }
                             ElementState::Released => {
-                                self.is_panning = false;
-                                self.pan_start = None;
+                                self.input.is_panning = false;
+                                self.input.pan_start = None;
                             }
                         }
                         true
@@ -437,28 +395,28 @@ impl<'a> State<'a> {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.mouse_pos = [position.x as f32, position.y as f32];
+                self.input.mouse_pos = [position.x as f32, position.y as f32];
 
-                if self.is_panning {
-                    if let Some((start_mouse, start_offset)) = self.pan_start {
-                        self.canvas_transform.offset[0] =
-                            start_offset[0] + (self.mouse_pos[0] - start_mouse[0]);
-                        self.canvas_transform.offset[1] =
-                            start_offset[1] + (self.mouse_pos[1] - start_mouse[1]);
+                if self.input.is_panning {
+                    if let Some((start_mouse, start_offset)) = self.input.pan_start {
+                        self.canvas.transform.offset[0] =
+                            start_offset[0] + (self.input.mouse_pos[0] - start_mouse[0]);
+                        self.canvas.transform.offset[1] =
+                            start_offset[1] + (self.input.mouse_pos[1] - start_mouse[1]);
 
-                        self.uniforms.update_transform(
-                            &self.canvas_transform,
+                        self.canvas.uniform.update_transform(
+                            &self.canvas.transform,
                             (self.size.width as f32, self.size.height as f32),
                         );
-                        self.queue.write_buffer(
-                            &self.uniform_buffer,
+                        self.gpu.queue.write_buffer(
+                            &self.canvas.uniform_buffer,
                             0,
-                            bytemuck::cast_slice(&[self.uniforms]),
+                            bytemuck::cast_slice(&[self.canvas.uniform]),
                         );
                     }
-                } else if self.is_drawing && self.current_tool == Tool::Pen {
-                    let canvas_pos = self.canvas_transform.screen_to_canvas(self.mouse_pos);
-                    self.current_stroke.push(canvas_pos);
+                } else if self.input.is_drawing && self.current_tool == Tool::Pen {
+                    let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                    self.input.current_stroke.push(canvas_pos);
                 }
                 true
             }
@@ -468,24 +426,26 @@ impl<'a> State<'a> {
                     MouseScrollDelta::PixelDelta(pos) => 1.0 + pos.y as f32 * 0.001,
                 };
 
-                let mouse_canvas_before = self.canvas_transform.screen_to_canvas(self.mouse_pos);
-                self.canvas_transform.scale *= zoom_factor;
-                self.canvas_transform.scale = self.canvas_transform.scale.clamp(0.1, 10.0);
-                let mouse_canvas_after = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                let mouse_canvas_before =
+                    self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                self.canvas.transform.scale *= zoom_factor;
+                self.canvas.transform.scale = self.canvas.transform.scale.clamp(0.1, 10.0);
+                let mouse_canvas_after =
+                    self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
 
-                self.canvas_transform.offset[0] +=
-                    (mouse_canvas_after[0] - mouse_canvas_before[0]) * self.canvas_transform.scale;
-                self.canvas_transform.offset[1] +=
-                    (mouse_canvas_after[1] - mouse_canvas_before[1]) * self.canvas_transform.scale;
+                self.canvas.transform.offset[0] +=
+                    (mouse_canvas_after[0] - mouse_canvas_before[0]) * self.canvas.transform.scale;
+                self.canvas.transform.offset[1] +=
+                    (mouse_canvas_after[1] - mouse_canvas_before[1]) * self.canvas.transform.scale;
 
-                self.uniforms.update_transform(
-                    &self.canvas_transform,
+                self.canvas.uniform.update_transform(
+                    &self.canvas.transform,
                     (self.size.width as f32, self.size.height as f32),
                 );
-                self.queue.write_buffer(
-                    &self.uniform_buffer,
+                self.gpu.queue.write_buffer(
+                    &self.canvas.uniform_buffer,
                     0,
-                    bytemuck::cast_slice(&[self.uniforms]),
+                    bytemuck::cast_slice(&[self.canvas.uniform]),
                 );
 
                 true
@@ -497,26 +457,26 @@ impl<'a> State<'a> {
                     return false;
                 }
 
-                if self.is_typing {
+                if self.typing.active {
                     if let Some(txt) = &key_event.text {
                         let mut added_visible = false;
                         for ch in txt.chars() {
                             if !ch.is_control() {
-                                self.text_input_buffer.push(ch);
+                                self.typing.buffer.push(ch);
                                 added_visible = true;
                             }
                         }
 
                         if added_visible {
-                            self.cursor_visible = true;
-                            self.cursor_blink_timer = std::time::Instant::now();
+                            self.typing.cursor_visible = true;
+                            self.typing.blink_timer = std::time::Instant::now();
                             return true;
                         }
                     }
                 }
 
                 let is_ctrl_or_cmd =
-                    self.modifiers_state.control_key() || self.modifiers_state.super_key();
+                    self.input.modifiers.control_key() || self.input.modifiers.super_key();
 
                 let keycode_opt = match key_event.physical_key {
                     winit::keyboard::PhysicalKey::Code(code) => Some(code),
@@ -526,24 +486,24 @@ impl<'a> State<'a> {
                 if let Some(keycode) = keycode_opt {
                     match keycode {
                         winit::keyboard::KeyCode::Backspace => {
-                            if self.is_typing && !self.text_input_buffer.is_empty() {
-                                self.text_input_buffer.pop();
+                            if self.typing.active && !self.typing.buffer.is_empty() {
+                                self.typing.buffer.pop();
                                 return true;
                             }
                             false
                         }
                         winit::keyboard::KeyCode::Enter => {
-                            if self.is_typing {
-                                if !self.text_input_buffer.is_empty() {
+                            if self.typing.active {
+                                if !self.typing.buffer.is_empty() {
                                     self.elements.push(DrawingElement::Text {
-                                        position: self.text_input_position,
-                                        content: self.text_input_buffer.clone(),
+                                        position: self.typing.pos_canvas,
+                                        content: self.typing.buffer.clone(),
                                         color: self.current_color,
                                         size: 32.0,
                                     });
                                 }
-                                self.is_typing = false;
-                                self.text_input_buffer.clear();
+                                self.typing.active = false;
+                                self.typing.buffer.clear();
                                 return true;
                             }
                             false
@@ -588,17 +548,17 @@ impl<'a> State<'a> {
                         }
                         winit::keyboard::KeyCode::Minus => {
                             if is_ctrl_or_cmd {
-                                self.canvas_transform.scale /= 1.1;
-                                self.canvas_transform.scale =
-                                    self.canvas_transform.scale.clamp(0.1, 10.0);
-                                self.uniforms.update_transform(
-                                    &self.canvas_transform,
+                                self.canvas.transform.scale /= 1.1;
+                                self.canvas.transform.scale =
+                                    self.canvas.transform.scale.clamp(0.1, 10.0);
+                                self.canvas.uniform.update_transform(
+                                    &self.canvas.transform,
                                     (self.size.width as f32, self.size.height as f32),
                                 );
-                                self.queue.write_buffer(
-                                    &self.uniform_buffer,
+                                self.gpu.queue.write_buffer(
+                                    &self.canvas.uniform_buffer,
                                     0,
-                                    bytemuck::cast_slice(&[self.uniforms]),
+                                    bytemuck::cast_slice(&[self.canvas.uniform]),
                                 );
                                 true
                             } else {
@@ -607,17 +567,17 @@ impl<'a> State<'a> {
                         }
                         winit::keyboard::KeyCode::Equal => {
                             if is_ctrl_or_cmd {
-                                self.canvas_transform.scale *= 1.1;
-                                self.canvas_transform.scale =
-                                    self.canvas_transform.scale.clamp(0.1, 10.0);
-                                self.uniforms.update_transform(
-                                    &self.canvas_transform,
+                                self.canvas.transform.scale *= 1.1;
+                                self.canvas.transform.scale =
+                                    self.canvas.transform.scale.clamp(0.1, 10.0);
+                                self.canvas.uniform.update_transform(
+                                    &self.canvas.transform,
                                     (self.size.width as f32, self.size.height as f32),
                                 );
-                                self.queue.write_buffer(
-                                    &self.uniform_buffer,
+                                self.gpu.queue.write_buffer(
+                                    &self.canvas.uniform_buffer,
                                     0,
-                                    bytemuck::cast_slice(&[self.uniforms]),
+                                    bytemuck::cast_slice(&[self.canvas.uniform]),
                                 );
                                 true
                             } else {
@@ -632,10 +592,10 @@ impl<'a> State<'a> {
             }
             WindowEvent::Ime(ime) => {
                 if let winit::event::Ime::Commit(text) = ime {
-                    if self.is_typing {
+                    if self.typing.active {
                         for ch in text.chars() {
                             if !ch.is_control() {
-                                self.text_input_buffer.push(ch);
+                                self.typing.buffer.push(ch);
                             }
                         }
                         return true;
@@ -650,19 +610,19 @@ impl<'a> State<'a> {
     fn finish_drawing(&mut self) {
         let element = match self.current_tool {
             Tool::Pen => {
-                if self.current_stroke.len() > 1 {
+                if self.input.current_stroke.len() > 1 {
                     Some(DrawingElement::Stroke {
-                        points: self.current_stroke.clone(),
+                        points: self.input.current_stroke.clone(),
                         color: self.current_color,
-                        width: self.current_stroke_width,
+                        width: self.stroke_width,
                     })
                 } else {
                     None
                 }
             }
             Tool::Rectangle => {
-                if let Some(start) = self.drag_start {
-                    let end = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     let position = [start[0].min(end[0]), start[1].min(end[1])];
                     let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
 
@@ -671,15 +631,15 @@ impl<'a> State<'a> {
                         size,
                         color: self.current_color,
                         fill: false,
-                        stroke_width: self.current_stroke_width,
+                        stroke_width: self.stroke_width,
                     })
                 } else {
                     None
                 }
             }
             Tool::Circle => {
-                if let Some(start) = self.drag_start {
-                    let end = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     let radius = ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt();
 
                     Some(DrawingElement::Circle {
@@ -687,21 +647,21 @@ impl<'a> State<'a> {
                         radius,
                         color: self.current_color,
                         fill: false,
-                        stroke_width: self.current_stroke_width,
+                        stroke_width: self.stroke_width,
                     })
                 } else {
                     None
                 }
             }
             Tool::Arrow => {
-                if let Some(start) = self.drag_start {
-                    let end = self.canvas_transform.screen_to_canvas(self.mouse_pos);
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
 
                     Some(DrawingElement::Arrow {
                         start,
                         end,
                         color: self.current_color,
-                        width: self.current_stroke_width,
+                        width: self.stroke_width,
                     })
                 } else {
                     None
@@ -714,17 +674,16 @@ impl<'a> State<'a> {
             self.elements.push(element);
         }
 
-        self.current_stroke.clear();
-        self.drag_start = None;
+        self.input.current_stroke.clear();
+        self.input.drag_start = None;
     }
 
     fn update(&mut self) {
-        // Update cursor blink
-        if self.is_typing {
-            let elapsed = self.cursor_blink_timer.elapsed();
+        if self.typing.active {
+            let elapsed = self.typing.blink_timer.elapsed();
             if elapsed.as_millis() > 500 {
-                self.cursor_visible = !self.cursor_visible;
-                self.cursor_blink_timer = std::time::Instant::now();
+                self.typing.cursor_visible = !self.typing.cursor_visible;
+                self.typing.blink_timer = std::time::Instant::now();
             }
         }
         self.update_buffers();
@@ -732,7 +691,7 @@ impl<'a> State<'a> {
         let (ui_vertices, ui_indices) = self.ui_renderer.generate_ui_vertices(self.current_tool);
 
         if !ui_vertices.is_empty() {
-            self.ui_vertex_buffer = Some(self.device.create_buffer_init(
+            self.ui_geo.vertex = Some(self.gpu.device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("UI Vertex Buffer"),
                     contents: bytemuck::cast_slice(&ui_vertices),
@@ -740,7 +699,7 @@ impl<'a> State<'a> {
                 },
             ));
 
-            self.ui_index_buffer = Some(self.device.create_buffer_init(
+            self.ui_geo.index = Some(self.gpu.device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("UI Index Buffer"),
                     contents: bytemuck::cast_slice(&ui_indices),
@@ -748,25 +707,25 @@ impl<'a> State<'a> {
                 },
             ));
 
-            self.ui_num_indices = ui_indices.len() as u32;
+            self.ui_geo.count = ui_indices.len() as u32;
         }
 
         let mut drawing_elements = self.elements.clone();
-        if self.is_typing {
-            let mut display_text = self.text_input_buffer.clone();
-            if self.cursor_visible {
+        if self.typing.active {
+            let mut display_text = self.typing.buffer.clone();
+            if self.typing.cursor_visible {
                 display_text.push('|');
             }
             drawing_elements.push(DrawingElement::Text {
-                position: self.text_input_position,
+                position: self.typing.pos_canvas,
                 content: display_text,
                 color: self.current_color,
                 size: 32.0,
             });
         }
         self.text_renderer.prepare(
-            &self.device,
-            &self.queue,
+            &self.gpu.device,
+            &self.gpu.queue,
             &drawing_elements,
             (self.size.width as f32, self.size.height as f32),
         );
@@ -1078,20 +1037,20 @@ impl<'a> State<'a> {
             }
         }
 
-        if self.is_drawing {
+        if self.input.is_drawing {
             match self.current_tool {
                 Tool::Pen => {
-                    if self.current_stroke.len() > 1 {
-                        for i in 0..self.current_stroke.len().saturating_sub(1) {
-                            let p1 = self.current_stroke[i];
-                            let p2 = self.current_stroke[i + 1];
+                    if self.input.current_stroke.len() > 1 {
+                        for i in 0..self.input.current_stroke.len().saturating_sub(1) {
+                            let p1 = self.input.current_stroke[i];
+                            let p2 = self.input.current_stroke[i + 1];
 
                             let dx = p2[0] - p1[0];
                             let dy = p2[1] - p1[1];
                             let len = (dx * dx + dy * dy).sqrt();
                             if len > 0.0 {
-                                let nx = -dy / len * self.current_stroke_width * 0.5;
-                                let ny = dx / len * self.current_stroke_width * 0.5;
+                                let nx = -dy / len * self.stroke_width * 0.5;
+                                let ny = dx / len * self.stroke_width * 0.5;
 
                                 vertices.push(Vertex {
                                     position: [p1[0] - nx, p1[1] - ny],
@@ -1130,7 +1089,7 @@ impl<'a> State<'a> {
         }
 
         if !vertices.is_empty() {
-            self.vertex_buffer = Some(self.device.create_buffer_init(
+            self.geometry.vertex = Some(self.gpu.device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Vertex Buffer"),
                     contents: bytemuck::cast_slice(&vertices),
@@ -1138,7 +1097,7 @@ impl<'a> State<'a> {
                 },
             ));
 
-            self.index_buffer = Some(self.device.create_buffer_init(
+            self.geometry.index = Some(self.gpu.device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Index Buffer"),
                     contents: bytemuck::cast_slice(&indices),
@@ -1146,21 +1105,22 @@ impl<'a> State<'a> {
                 },
             ));
 
-            self.num_indices = indices.len() as u32;
+            self.geometry.count = indices.len() as u32;
         } else {
-            self.vertex_buffer = None;
-            self.index_buffer = None;
-            self.num_indices = 0;
+            self.geometry.vertex = None;
+            self.geometry.index = None;
+            self.geometry.count = 0;
         }
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture()?;
+        let output = self.gpu.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = self
+            .gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
@@ -1187,15 +1147,15 @@ impl<'a> State<'a> {
                 timestamp_writes: None,
             });
 
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            render_pass.set_pipeline(&self.gpu.render_pipeline);
+            render_pass.set_bind_group(0, &self.canvas.uniform_bind_group, &[]);
 
             if let (Some(vertex_buffer), Some(index_buffer)) =
-                (&self.vertex_buffer, &self.index_buffer)
+                (&self.geometry.vertex, &self.geometry.index)
             {
                 render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                 render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+                render_pass.draw_indexed(0..self.geometry.count, 0, 0..1);
             }
 
             let mut ui_uniforms = Uniforms::new();
@@ -1203,29 +1163,29 @@ impl<'a> State<'a> {
                 &CanvasTransform::new(),
                 (self.size.width as f32, self.size.height as f32),
             );
-            self.queue.write_buffer(
-                &self.uniform_buffer,
+            self.gpu.queue.write_buffer(
+                &self.canvas.uniform_buffer,
                 0,
                 bytemuck::cast_slice(&[ui_uniforms]),
             );
 
             if let (Some(ui_vertex_buffer), Some(ui_index_buffer)) =
-                (&self.ui_vertex_buffer, &self.ui_index_buffer)
+                (&self.ui_geo.vertex, &self.ui_geo.index)
             {
                 render_pass.set_vertex_buffer(0, ui_vertex_buffer.slice(..));
                 render_pass.set_index_buffer(ui_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                render_pass.draw_indexed(0..self.ui_num_indices, 0, 0..1);
+                render_pass.draw_indexed(0..self.ui_geo.count, 0, 0..1);
             }
 
-            self.queue.write_buffer(
-                &self.uniform_buffer,
+            self.gpu.queue.write_buffer(
+                &self.canvas.uniform_buffer,
                 0,
-                bytemuck::cast_slice(&[self.uniforms]),
+                bytemuck::cast_slice(&[self.canvas.uniform]),
             );
         }
 
         self.text_renderer.draw(&mut encoder, &view);
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
