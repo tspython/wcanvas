@@ -4,6 +4,13 @@ use winit::keyboard::ModifiersState;
 
 use crate::canvas::{CanvasTransform, Uniforms};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserInputState {
+    Idle,
+    Panning,
+    Drawing,
+}
+
 pub struct GpuContext<'a> {
     pub surface: Surface<'a>,
     pub device: Device,
@@ -34,13 +41,11 @@ pub struct UiBuffers {
 pub struct InputState {
     pub mouse_pos: [f32; 2],
     pub modifiers: ModifiersState,
-
-    pub is_panning: bool,
+    pub state: UserInputState,
     pub pan_start: Option<([f32; 2], [f32; 2])>,
-
-    pub is_drawing: bool,
     pub current_stroke: Vec<[f32; 2]>,
     pub drag_start: Option<[f32; 2]>,
+    pub dragging_textbox: Option<u64>,
 }
 
 pub struct TextInput {

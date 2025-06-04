@@ -9,6 +9,13 @@ pub enum Tool {
     Select,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BoxState {
+    Idle,
+    Selected,
+    Editing,
+}
+
 #[derive(Debug, Clone)]
 pub enum DrawingElement {
     Stroke {
@@ -41,5 +48,14 @@ pub enum DrawingElement {
         content: String,
         color: [f32; 4],
         size: f32,
+    },
+    TextBox {
+        id: u64,
+        pos: [f32; 2],
+        size: [f32; 2],
+        content: String,
+        color: [f32; 4],
+        font_size: f32,
+        state: BoxState,
     },
 }

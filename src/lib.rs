@@ -9,7 +9,10 @@ use canvas::CanvasTransform;
 use canvas::Uniforms;
 use cgmath::prelude::*;
 use drawing::{DrawingElement, Tool};
-use state::{Canvas, GeometryBuffers, GpuContext, InputState, TextInput, UiBuffers};
+use state::{
+    Canvas, GeometryBuffers, GpuContext, InputState, TextInput, UiBuffers,
+    UserInputState::{Drawing, Idle, Panning},
+};
 use text_renderer::TextRenderer;
 use ui::UiRenderer;
 
@@ -251,13 +254,11 @@ impl<'a> State<'a> {
         let input = InputState {
             mouse_pos: [0.0; 2],
             modifiers: ModifiersState::empty(),
-
-            is_panning: false,
+            state: Idle,
             pan_start: None,
-
-            is_drawing: false,
             current_stroke: Vec::new(),
             drag_start: None,
+            dragging_textbox: None,
         };
 
         let typing = TextInput {
@@ -330,11 +331,11 @@ impl<'a> State<'a> {
                                 }
 
                                 if self.input.modifiers.shift_key() {
-                                    self.input.is_panning = true;
+                                    self.input.state = Panning;
                                     self.input.pan_start =
                                         Some((self.input.mouse_pos, self.canvas.transform.offset));
                                 } else {
-                                    self.input.is_drawing = true;
+                                    self.input.state = Drawing;
                                     let canvas_pos = self
                                         .canvas
                                         .transform
@@ -365,27 +366,29 @@ impl<'a> State<'a> {
                                     }
                                 }
                             }
-                            ElementState::Released => {
-                                if self.input.is_panning {
-                                    self.input.is_panning = false;
+                            ElementState::Released => match self.input.state {
+                                Panning => {
+                                    self.input.state = Idle;
                                     self.input.pan_start = None;
-                                } else if self.input.is_drawing {
-                                    self.input.is_drawing = false;
+                                }
+                                Drawing => {
+                                    self.input.state = Idle;
                                     self.finish_drawing();
                                 }
-                            }
+                                _ => {}
+                            },
                         }
                         true
                     }
                     MouseButton::Middle => {
                         match state {
                             ElementState::Pressed => {
-                                self.input.is_panning = true;
+                                self.input.state = Panning;
                                 self.input.pan_start =
                                     Some((self.input.mouse_pos, self.canvas.transform.offset));
                             }
                             ElementState::Released => {
-                                self.input.is_panning = false;
+                                self.input.state = Idle;
                                 self.input.pan_start = None;
                             }
                         }
@@ -397,7 +400,7 @@ impl<'a> State<'a> {
             WindowEvent::CursorMoved { position, .. } => {
                 self.input.mouse_pos = [position.x as f32, position.y as f32];
 
-                if self.input.is_panning {
+                if self.input.state == Panning {
                     if let Some((start_mouse, start_offset)) = self.input.pan_start {
                         self.canvas.transform.offset[0] =
                             start_offset[0] + (self.input.mouse_pos[0] - start_mouse[0]);
@@ -414,7 +417,7 @@ impl<'a> State<'a> {
                             bytemuck::cast_slice(&[self.canvas.uniform]),
                         );
                     }
-                } else if self.input.is_drawing && self.current_tool == Tool::Pen {
+                } else if self.input.state == Drawing && self.current_tool == Tool::Pen {
                     let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     self.input.current_stroke.push(canvas_pos);
                 }
@@ -1034,10 +1037,11 @@ impl<'a> State<'a> {
                     }
                 }
                 DrawingElement::Text { .. } => {}
+                DrawingElement::TextBox { .. } => {}
             }
         }
 
-        if self.input.is_drawing {
+        if self.input.state == Drawing {
             match self.current_tool {
                 Tool::Pen => {
                     if self.input.current_stroke.len() > 1 {
