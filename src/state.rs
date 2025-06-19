@@ -9,6 +9,7 @@ pub enum UserInputState {
     Idle,
     Panning,
     Drawing,
+    Dragging,
 }
 
 pub struct GpuContext<'a> {
@@ -17,6 +18,19 @@ pub struct GpuContext<'a> {
     pub queue: Queue,
     pub config: SurfaceConfiguration,
     pub render_pipeline: RenderPipeline,
+    pub ui_render_pipeline: RenderPipeline,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct UiScreenUniforms {
+    pub screen_size: [f32; 2],
+    pub _padding: [f32; 2], // Padding to make it 16-byte aligned
+}
+
+pub struct UiScreenBuffers {
+    pub uniform: Buffer,
+    pub bind_group: BindGroup,
 }
 
 pub struct Canvas {
@@ -45,7 +59,8 @@ pub struct InputState {
     pub pan_start: Option<([f32; 2], [f32; 2])>,
     pub current_stroke: Vec<[f32; 2]>,
     pub drag_start: Option<[f32; 2]>,
-    pub dragging_textbox: Option<u64>,
+    pub selected_element: Option<usize>,
+    pub element_start_pos: Option<[f32; 2]>,
 }
 
 pub struct TextInput {

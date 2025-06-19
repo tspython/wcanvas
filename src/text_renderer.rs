@@ -1,4 +1,4 @@
-use crate::DrawingElement;
+use crate::drawing::DrawingElement;
 use ab_glyph::{Font, FontArc, ScaleFont, point};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -65,7 +65,7 @@ pub struct TextRenderer {
 }
 
 impl TextRenderer {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, fmt: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, fmt: wgpu::TextureFormat, canvas_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("glyph atlas"),
             size: wgpu::Extent3d {
@@ -129,7 +129,7 @@ impl TextRenderer {
         });
         let pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("text‑pl"),
-            bind_group_layouts: &[&bgl],
+            bind_group_layouts: &[canvas_bind_group_layout, &bgl],
             push_constant_ranges: &[],
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -323,10 +323,11 @@ impl TextRenderer {
                     let [u0, v0] = info.uv_min;
                     let [u1, v1] = info.uv_max;
 
-                    let nx0 = x0 / vw * 2.0 - 1.0;
-                    let ny0 = 1.0 - y0 / vh * 2.0;
-                    let nx1 = x1 / vw * 2.0 - 1.0;
-                    let ny1 = 1.0 - y1 / vh * 2.0;
+                    // Keep positions in world space - the shader will transform them
+                    let nx0 = x0;
+                    let ny0 = y0;
+                    let nx1 = x1;
+                    let ny1 = y1;
 
                     self.vertices.extend_from_slice(&[
                         TextVertex {
@@ -380,7 +381,7 @@ impl TextRenderer {
         }
     }
 
-    pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, canvas_bind_group: &wgpu::BindGroup) {
         if let (Some(vb), Some(ib)) = (&self.vbuf, &self.ibuf) {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("text pass"),
@@ -397,7 +398,8 @@ impl TextRenderer {
                 timestamp_writes: None,
             });
             rp.set_pipeline(&self.pipeline);
-            rp.set_bind_group(0, &self.bind_group, &[]);
+            rp.set_bind_group(0, canvas_bind_group, &[]);
+            rp.set_bind_group(1, &self.bind_group, &[]);
             rp.set_vertex_buffer(0, vb.slice(..));
             rp.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
             rp.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
