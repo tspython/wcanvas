@@ -31,7 +31,7 @@ pub struct GpuContext<'a> {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct UiScreenUniforms {
     pub screen_size: [f32; 2],
-    pub _padding: [f32; 2], // Padding to make it 16-byte aligned
+    pub _padding: [f32; 2],
 }
 
 pub struct UiScreenBuffers {

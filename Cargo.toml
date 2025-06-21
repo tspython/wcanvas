@@ -32,5 +32,5 @@ console_log = "1.0"
 wgpu = { version = "25.0", features = ["webgl"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4.30"
-web-sys = { version = "0.3", features = ["Document", "Window", "Element"] }
+web-sys = { version = "0.3", features = ["Document", "Window", "Element", "HtmlCanvasElement", "EventTarget", "Event"] }
 web-time = "0.2"

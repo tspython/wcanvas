@@ -211,7 +211,6 @@ impl TextRenderer {
                 let w = bb.width() as u32;
                 let h = bb.height() as u32;
 
-                // Bump‑allocate the atlas position
                 if self.next_x + w >= 1024 {
                     self.next_x = 0;
                     self.next_y += self.row_h;

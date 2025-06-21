@@ -71,8 +71,8 @@ impl UiRenderer {
         let icon_size = 40.0;
         let num_icons = self.tool_icons.len() as f32;
         let total_icon_width = num_icons * icon_size;
-        let spacing = (panel_width - total_icon_width - 20.0) / (num_icons - 1.0); // 20.0 for padding
-        let icon_start_x = panel_left + 10.0; // 10px padding from left
+        let spacing = (panel_width - total_icon_width - 20.0) / (num_icons - 1.0);
+        let icon_start_x = panel_left + 10.0;
 
         let shadow_bg = [
             Vertex {
@@ -140,7 +140,7 @@ impl UiRenderer {
             let is_selected = icon.tool == current_tool;
             
             let icon_x = icon_start_x + i as f32 * (icon_size + spacing);
-            let icon_y = panel_top + 5.0; // 5px padding from top
+            let icon_y = panel_top + 5.0;
             let icon_pos = [icon_x, icon_y];
             let icon_size_vec = [icon_size, icon_size];
             
@@ -204,15 +204,15 @@ impl UiRenderer {
                 Tool::Select => {
                     let cursor_verts = [
                         Vertex {
-                            position: [center[0] - 6.0, center[1] - 8.0], // Top point
+                            position: [center[0] - 6.0, center[1] - 8.0],
                             color: icon_color,
                         },
                         Vertex {
-                            position: [center[0] - 6.0, center[1] + 2.0], // Bottom left
+                            position: [center[0] - 6.0, center[1] + 2.0],
                             color: icon_color,
                         },
                         Vertex {
-                            position: [center[0] - 2.0, center[1] - 2.0], // Middle right
+                            position: [center[0] - 2.0, center[1] - 2.0],
                             color: icon_color,
                         },
                     ];
@@ -298,15 +298,15 @@ impl UiRenderer {
                     
                     vertices.extend_from_slice(&[
                         Vertex {
-                            position: [center[0] + 8.0, center[1]], // Arrow tip
+                            position: [center[0] + 8.0, center[1]],
                             color: icon_color,
                         },
                         Vertex {
-                            position: [center[0] + 3.0, center[1] - 3.0], // Upper barb
+                            position: [center[0] + 3.0, center[1] - 3.0],
                             color: icon_color,
                         },
                         Vertex {
-                            position: [center[0] + 3.0, center[1] + 3.0], // Lower barb
+                            position: [center[0] + 3.0, center[1] + 3.0],
                             color: icon_color,
                         },
                     ]);
@@ -409,7 +409,7 @@ impl UiRenderer {
         let total_icon_width = num_icons * icon_size;
         let spacing = (panel_width - total_icon_width - 20.0) / (num_icons - 1.0);
         let icon_start_x = (screen_size.0 - panel_width) / 2.0 + 10.0;
-        let icon_y = 15.0 + 5.0; // panel_top + padding
+        let icon_y = 15.0 + 5.0;
         
         for (i, icon) in self.tool_icons.iter().enumerate() {
             let icon_x = icon_start_x + i as f32 * (icon_size + spacing);

@@ -106,7 +106,6 @@ impl<'a> State<'a> {
                                                     return true;
                                                 }
                                             }
-                                            // If no element was selected, clear selection
                                             self.input.selected_element = None;
                                         }
                                         _ => {
@@ -467,12 +466,10 @@ impl<'a> State<'a> {
     fn is_element_at_position(&self, element: &DrawingElement, pos: [f32; 2]) -> bool {
         match element {
             DrawingElement::Text { position, content, size, .. } => {
-                // Estimate text bounds based on content and size
                 let char_width = size * 0.6; // Approximate character width
                 let text_width = content.len() as f32 * char_width;
                 let text_height = size * 1.2; // Text height with some padding
                 
-                // Check if click is within text bounds
                 pos[0] >= position[0] - 5.0 && pos[0] <= position[0] + text_width + 5.0 &&
                 pos[1] >= position[1] - text_height && pos[1] <= position[1] + 5.0
             }
@@ -489,11 +486,9 @@ impl<'a> State<'a> {
                 distance <= *radius
             }
             DrawingElement::Arrow { start, end, width, .. } => {
-                // Check if point is near the arrow line
                 self.point_to_line_distance(pos, *start, *end) <= width * 2.0
             }
             DrawingElement::Stroke { points, width, .. } => {
-                // Check if point is near any segment of the stroke
                 for i in 0..points.len().saturating_sub(1) {
                     if self.point_to_line_distance(pos, points[i], points[i + 1]) <= width * 2.0 {
                         return true;
@@ -566,7 +561,6 @@ impl<'a> State<'a> {
         let line_length_squared = (line_end[0] - line_start[0]).powi(2) + (line_end[1] - line_start[1]).powi(2);
         
         if line_length_squared == 0.0 {
-            // Line is actually a point
             return ((point[0] - line_start[0]).powi(2) + (point[1] - line_start[1]).powi(2)).sqrt();
         }
         

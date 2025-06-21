@@ -46,7 +46,7 @@ impl<'a> State<'a> {
         #[cfg(target_arch = "wasm32")]
         {
             if size.width == 0 || size.height == 0 {
-                size = winit::dpi::PhysicalSize::new(800, 600);
+                size = winit::dpi::PhysicalSize::new(1920, 1080);
             }
         }
 

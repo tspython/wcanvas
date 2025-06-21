@@ -2,28 +2,43 @@
 <html>
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>WCanvas</title>
     <style>
-        body { 
-            margin: 0; 
-            padding: 0; 
-            background: #222; 
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+        
+        html, body { 
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #222;
+            touch-action: none;
+        }
+        
+        #wasm-example { 
             width: 100vw; 
             height: 100vh; 
-            overflow: hidden;
+            position: fixed;
+            top: 0;
+            left: 0;
         }
-        #wasm-example { 
-            width: 100%; 
-            height: 100%; 
-            display: flex; 
-            justify-content: center; 
-            align-items: center; 
-        }
+        
         canvas { 
             display: block; 
-            width: 800px; 
-            height: 600px; 
-            border: 1px solid #444; 
+            position: absolute;
+            top: 0;
+            left: 0;
+            touch-action: none;
         }
     </style>
 </head>

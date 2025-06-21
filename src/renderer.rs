@@ -46,7 +46,6 @@ impl<'a> State<'a> {
                 render_pass.draw_indexed(0..self.geometry.count, 0, 0..1);
             }
 
-            // Switch to UI pipeline for screen-space rendering
             render_pass.set_pipeline(&self.gpu.ui_render_pipeline);
             render_pass.set_bind_group(0, &self.ui_screen.bind_group, &[]);
 

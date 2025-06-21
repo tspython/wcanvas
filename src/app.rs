@@ -31,14 +31,7 @@ pub async fn run() {
         use winit::platform::web::WindowExtWebSys;
         
         let canvas = web_sys::Element::from(window.canvas().unwrap());
-        canvas.set_attribute("width", "800").unwrap();
-        canvas.set_attribute("height", "600").unwrap();
-        
         let canvas_html: web_sys::HtmlCanvasElement = canvas.clone().dyn_into().unwrap();
-        canvas_html.set_width(800);
-        canvas_html.set_height(600);
-        canvas_html.style().set_property("width", "800px").unwrap();
-        canvas_html.style().set_property("height", "600px").unwrap();
         
         web_sys::window()
             .and_then(|win| win.document())
@@ -48,8 +41,59 @@ pub async fn run() {
                 Some(())
             })
             .expect("Couldn't append canvas to document body.");
+
+        canvas_html.style().set_property("width", "100vw").unwrap();
+        canvas_html.style().set_property("height", "100vh").unwrap();
+        canvas_html.style().set_property("display", "block").unwrap();
+        
+        let update_canvas_size = || {
+            let web_window = web_sys::window().unwrap();
+            let device_pixel_ratio = web_window.device_pixel_ratio();
+            let css_width = web_window.inner_width().unwrap().as_f64().unwrap();
+            let css_height = web_window.inner_height().unwrap().as_f64().unwrap();
             
-        let _ = window.request_inner_size(PhysicalSize::new(800, 600));
+            let width = (css_width * device_pixel_ratio) as u32;
+            let height = (css_height * device_pixel_ratio) as u32;
+            
+            canvas_html.set_width(width);
+            canvas_html.set_height(height);
+            
+            canvas_html.style().set_property("width", &format!("{}px", css_width as u32)).unwrap();
+            canvas_html.style().set_property("height", &format!("{}px", css_height as u32)).unwrap();
+            
+            log::info!("Canvas size updated to: {}x{} (CSS: {}x{}, DPR: {})", 
+                      width, height, css_width as u32, css_height as u32, device_pixel_ratio);
+            (width, height)
+        };
+        
+        let (width, height) = update_canvas_size();
+        let _ = window.request_inner_size(PhysicalSize::new(width, height));
+        
+        let canvas_clone = canvas_html.clone();
+        let resize_closure = Closure::wrap(Box::new(move || {
+            let web_window = web_sys::window().unwrap();
+            let device_pixel_ratio = web_window.device_pixel_ratio();
+            let css_width = web_window.inner_width().unwrap().as_f64().unwrap();
+            let css_height = web_window.inner_height().unwrap().as_f64().unwrap();
+            
+            let width = (css_width * device_pixel_ratio) as u32;
+            let height = (css_height * device_pixel_ratio) as u32;
+            
+            canvas_clone.set_width(width);
+            canvas_clone.set_height(height);
+            canvas_clone.style().set_property("width", &format!("{}px", css_width as u32)).unwrap();
+            canvas_clone.style().set_property("height", &format!("{}px", css_height as u32)).unwrap();
+            
+            log::info!("Window resized to: {}x{} (CSS: {}x{}, DPR: {})", 
+                      width, height, css_width as u32, css_height as u32, device_pixel_ratio);
+        }) as Box<dyn FnMut()>);
+        
+        web_sys::window()
+            .unwrap()
+            .add_event_listener_with_callback("resize", resize_closure.as_ref().unchecked_ref())
+            .unwrap();
+        
+        resize_closure.forget();
     }
 
     let mut state = State::new(&window).await;
@@ -73,6 +117,7 @@ pub async fn run() {
                             ..
                         } => control_flow.exit(),
                         WindowEvent::Resized(physical_size) => {
+                            log::info!("WindowEvent::Resized: {}x{}", physical_size.width, physical_size.height);
                             state.resize(*physical_size);
                         }
                         WindowEvent::RedrawRequested => {
