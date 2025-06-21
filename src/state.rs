@@ -1,4 +1,10 @@
-use std::time::Instant;
+cfg_if::cfg_if! {
+    if #[cfg(target_arch = "wasm32")] {
+        use web_time::Instant;
+    } else {
+        use std::time::Instant;
+    }
+}
 use wgpu::{BindGroup, Buffer, Device, Queue, RenderPipeline, Surface, SurfaceConfiguration};
 use winit::keyboard::ModifiersState;
 

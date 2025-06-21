@@ -159,7 +159,7 @@ impl TextRenderer {
         });
 
         Self {
-            font: FontArc::try_from_slice(include_bytes!("../data/fonts/SF-Pro-Text-Bold.otf"))
+            font: FontArc::try_from_slice(include_bytes!("../data/fonts/Virgil.ttf"))
                 .unwrap(),
             tex,
             view,
@@ -323,7 +323,7 @@ impl TextRenderer {
                     let [u0, v0] = info.uv_min;
                     let [u1, v1] = info.uv_max;
 
-                    // Keep positions in world space - the shader will transform them
+                    
                     let nx0 = x0;
                     let ny0 = y0;
                     let nx1 = x1;

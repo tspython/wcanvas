@@ -50,12 +50,6 @@ impl UiRenderer {
                 size: [40.0, 40.0],
                 key_binding: "6",
             },
-            ToolIcon {
-                tool: Tool::Eraser,
-                position: [310.0, 10.0],
-                size: [40.0, 40.0],
-                key_binding: "7",
-            },
         ];
 
         Self { tool_icons }
@@ -66,8 +60,7 @@ impl UiRenderer {
         let mut indices = Vec::new();
         let mut index_offset = 0u16;
 
-        // Create a floating panel style with shadow effect - centered at top of screen
-        let panel_width = 350.0;
+        let panel_width = 300.0;
         let panel_height = 50.0;
         let panel_left = (screen_size.0 - panel_width) / 2.0;
         let panel_right = panel_left + panel_width;
@@ -75,14 +68,12 @@ impl UiRenderer {
         let panel_bottom = panel_top + panel_height;
         let shadow_offset = 2.0;
         
-        // Calculate icon positions based on centered panel
         let icon_size = 40.0;
         let num_icons = self.tool_icons.len() as f32;
         let total_icon_width = num_icons * icon_size;
         let spacing = (panel_width - total_icon_width - 20.0) / (num_icons - 1.0); // 20.0 for padding
         let icon_start_x = panel_left + 10.0; // 10px padding from left
 
-        // Shadow (darker background slightly offset)
         let shadow_bg = [
             Vertex {
                 position: [panel_left + shadow_offset, panel_top + shadow_offset],
@@ -213,21 +204,28 @@ impl UiRenderer {
                 Tool::Select => {
                     let cursor_verts = [
                         Vertex {
-                            position: [center[0] - 5.0, center[1] - 8.0],
+                            position: [center[0] - 6.0, center[1] - 8.0], // Top point
                             color: icon_color,
                         },
                         Vertex {
-                            position: [center[0] + 5.0, center[1]],
+                            position: [center[0] - 6.0, center[1] + 2.0], // Bottom left
                             color: icon_color,
                         },
                         Vertex {
-                            position: [center[0], center[1] + 8.0],
+                            position: [center[0] - 2.0, center[1] - 2.0], // Middle right
                             color: icon_color,
                         },
                     ];
                     vertices.extend_from_slice(&cursor_verts);
                     indices.extend_from_slice(&[index_offset, index_offset + 1, index_offset + 2]);
                     index_offset += 3;
+                    
+                    self.add_line(&mut vertices, &mut indices, &mut index_offset,
+                        [center[0] - 6.0, center[1] - 8.0], [center[0] - 6.0, center[1] + 2.0], 1.5, icon_color);
+                    self.add_line(&mut vertices, &mut indices, &mut index_offset,
+                        [center[0] - 6.0, center[1] + 2.0], [center[0] - 2.0, center[1] - 2.0], 1.5, icon_color);
+                    self.add_line(&mut vertices, &mut indices, &mut index_offset,
+                        [center[0] - 2.0, center[1] - 2.0], [center[0] - 6.0, center[1] - 8.0], 1.5, icon_color);
                 }
                 Tool::Pen => {
                     self.add_line(
@@ -292,70 +290,46 @@ impl UiRenderer {
                         &mut vertices,
                         &mut indices,
                         &mut index_offset,
-                        [center[0] - 8.0, center[1] + 5.0],
-                        [center[0] + 5.0, center[1] - 5.0],
+                        [center[0] - 8.0, center[1]],
+                        [center[0] + 6.0, center[1]],
                         2.0,
                         icon_color,
                     );
+                    
                     vertices.extend_from_slice(&[
                         Vertex {
-                            position: [center[0] + 5.0, center[1] - 5.0],
+                            position: [center[0] + 8.0, center[1]], // Arrow tip
                             color: icon_color,
                         },
                         Vertex {
-                            position: [center[0] + 1.0, center[1] - 5.0],
+                            position: [center[0] + 3.0, center[1] - 3.0], // Upper barb
                             color: icon_color,
                         },
                         Vertex {
-                            position: [center[0] + 5.0, center[1] - 1.0],
+                            position: [center[0] + 3.0, center[1] + 3.0], // Lower barb
                             color: icon_color,
                         },
                     ]);
                     indices.extend_from_slice(&[index_offset, index_offset + 1, index_offset + 2]);
                     index_offset += 3;
                 }
-                Tool::Text => {
+                                Tool::Text => {
                     self.add_line(&mut vertices, &mut indices, &mut index_offset,
                         [center[0] - 6.0, center[1] - 8.0], [center[0] + 6.0, center[1] - 8.0], 2.0, icon_color);
                     self.add_line(&mut vertices, &mut indices, &mut index_offset,
                         [center[0], center[1] - 8.0], [center[0], center[1] + 8.0], 2.0, icon_color);
                 }
                 Tool::Eraser => {
-                    vertices.extend_from_slice(&[
-                        Vertex {
-                            position: [center[0] - 6.0, center[1] - 4.0],
-                            color: icon_color,
-                        },
-                        Vertex {
-                            position: [center[0] + 6.0, center[1] - 4.0],
-                            color: icon_color,
-                        },
-                        Vertex {
-                            position: [center[0] + 6.0, center[1] + 4.0],
-                            color: icon_color,
-                        },
-                        Vertex {
-                            position: [center[0] - 6.0, center[1] + 4.0],
-                            color: icon_color,
-                        },
-                    ]);
-                    indices.extend_from_slice(&[
-                        index_offset, index_offset + 1, index_offset + 2,
-                        index_offset, index_offset + 2, index_offset + 3,
-                    ]);
-                    index_offset += 4;
                 }
             }
         }
 
-        // Add zoom indicator in bottom left
         let zoom_percent = (zoom_level * 100.0) as i32;
         let zoom_text_bg_width = 80.0;
         let zoom_text_bg_height = 25.0;
         let zoom_bg_x = 15.0;
         let zoom_bg_y = screen_size.1 - zoom_text_bg_height - 15.0;
 
-        // Zoom indicator background
         let zoom_bg = [
             Vertex {
                 position: [zoom_bg_x, zoom_bg_y],
@@ -429,7 +403,6 @@ impl UiRenderer {
     }
 
     pub fn handle_click(&self, mouse_pos: [f32; 2], screen_size: (f32, f32)) -> Option<Tool> {
-        // Calculate the same positioning logic as in generate_ui_vertices
         let panel_width = 350.0;
         let icon_size = 40.0;
         let num_icons = self.tool_icons.len() as f32;
@@ -453,7 +426,6 @@ impl UiRenderer {
     }
     
     pub fn is_mouse_over_ui(&self, mouse_pos: [f32; 2], screen_size: (f32, f32)) -> bool {
-        // Check if mouse is over the entire toolbar panel
         let panel_width = 350.0;
         let panel_height = 50.0;
         let panel_left = (screen_size.0 - panel_width) / 2.0;

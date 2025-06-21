@@ -11,15 +11,19 @@ mod ui;
 mod update_logic;
 mod vertex;
 
-// Re-export the main public interface
 pub use app::run;
 pub use vertex::Vertex;
 
-// Re-export for WASM compatibility
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(start)]
+pub async fn start() {
+    run().await;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn start() {
     run().await;
 }

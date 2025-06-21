@@ -8,7 +8,13 @@ use crate::text_renderer::TextRenderer;
 use crate::ui::UiRenderer;
 use crate::vertex::Vertex;
 
-use std::time::Instant;
+cfg_if::cfg_if! {
+    if #[cfg(target_arch = "wasm32")] {
+        use web_time::Instant;
+    } else {
+        use std::time::Instant;
+    }
+}
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
@@ -35,7 +41,14 @@ pub struct State<'a> {
 
 impl<'a> State<'a> {
     pub async fn new(window: &'a Window) -> State<'a> {
-        let size = window.inner_size();
+        let mut size = window.inner_size();
+        
+        #[cfg(target_arch = "wasm32")]
+        {
+            if size.width == 0 || size.height == 0 {
+                size = winit::dpi::PhysicalSize::new(800, 600);
+            }
+        }
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]

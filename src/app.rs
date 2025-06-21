@@ -7,9 +7,8 @@ use winit::{
 };
 
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::{prelude::*, JsCast};
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
 pub async fn run() {
     cfg_if::cfg_if! {
         if #[cfg(target_arch = "wasm32")] {
@@ -29,18 +28,28 @@ pub async fn run() {
     #[cfg(target_arch = "wasm32")]
     {
         use winit::dpi::PhysicalSize;
-        let _ = window.request_inner_size(PhysicalSize::new(800, 600));
-
         use winit::platform::web::WindowExtWebSys;
+        
+        let canvas = web_sys::Element::from(window.canvas().unwrap());
+        canvas.set_attribute("width", "800").unwrap();
+        canvas.set_attribute("height", "600").unwrap();
+        
+        let canvas_html: web_sys::HtmlCanvasElement = canvas.clone().dyn_into().unwrap();
+        canvas_html.set_width(800);
+        canvas_html.set_height(600);
+        canvas_html.style().set_property("width", "800px").unwrap();
+        canvas_html.style().set_property("height", "600px").unwrap();
+        
         web_sys::window()
             .and_then(|win| win.document())
             .and_then(|doc| {
                 let dst = doc.get_element_by_id("wasm-example")?;
-                let canvas = web_sys::Element::from(window.canvas()?);
                 dst.append_child(&canvas).ok()?;
                 Some(())
             })
             .expect("Couldn't append canvas to document body.");
+            
+        let _ = window.request_inner_size(PhysicalSize::new(800, 600));
     }
 
     let mut state = State::new(&window).await;

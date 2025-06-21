@@ -4,6 +4,14 @@ use crate::state::UserInputState::{Dragging, Drawing, Idle, Panning};
 
 use winit::event::*;
 
+cfg_if::cfg_if! {
+    if #[cfg(target_arch = "wasm32")] {
+        use web_time::Instant;
+    } else {
+        use std::time::Instant;
+    }
+}
+
 impl<'a> State<'a> {
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
@@ -88,18 +96,18 @@ impl<'a> State<'a> {
                                     match self.current_tool {
                                         Tool::Select => {
                                             for (i, element) in self.elements.iter().enumerate() {
-                                                if let DrawingElement::Text { position, .. } = element {
-                                                    let distance = ((canvas_pos[0] - position[0]).powi(2) + 
-                                                                  (canvas_pos[1] - position[1]).powi(2)).sqrt();
-                                                    if distance < 50.0 { 
-                                                        self.input.state = Dragging;
-                                                        self.input.selected_element = Some(i);
-                                                        self.input.drag_start = Some(canvas_pos);
-                                                        self.input.element_start_pos = Some(*position);
-                                                        return true;
-                                                    }
+                                                if self.is_element_at_position(element, canvas_pos) {
+                                                    #[cfg(debug_assertions)]
+                                                    println!("Selected element {} at position {:?}", i, canvas_pos);
+                                                    self.input.state = Dragging;
+                                                    self.input.selected_element = Some(i);
+                                                    self.input.drag_start = Some(canvas_pos);
+                                                    self.input.element_start_pos = Some(self.get_element_position(element));
+                                                    return true;
                                                 }
                                             }
+                                            // If no element was selected, clear selection
+                                            self.input.selected_element = None;
                                         }
                                         _ => {
                                             self.input.state = Drawing;
@@ -123,7 +131,7 @@ impl<'a> State<'a> {
                                             self.typing.pos_canvas = canvas_pos;
                                             self.typing.buffer.clear();
                                             self.typing.cursor_visible = true;
-                                            self.typing.blink_timer = std::time::Instant::now();
+                                            self.typing.blink_timer = Instant::now();
                                             return true;
                                         }
                                         _ => {}
@@ -205,10 +213,7 @@ impl<'a> State<'a> {
                         (self.input.selected_element, self.input.drag_start, self.input.element_start_pos) {
                         let dx = canvas_pos[0] - start_mouse[0];
                         let dy = canvas_pos[1] - start_mouse[1];
-                        if let DrawingElement::Text { position, .. } = &mut self.elements[idx] {
-                            position[0] = orig_pos[0] + dx;
-                            position[1] = orig_pos[1] + dy;
-                        }
+                        self.move_element(idx, orig_pos, dx, dy);
                     }
                     return true;
                 }
@@ -263,7 +268,7 @@ impl<'a> State<'a> {
 
                         if added_visible {
                             self.typing.cursor_visible = true;
-                            self.typing.blink_timer = std::time::Instant::now();
+                            self.typing.blink_timer = Instant::now();
                             return true;
                         }
                     }
@@ -456,5 +461,125 @@ impl<'a> State<'a> {
 
         self.input.current_stroke.clear();
         self.input.drag_start = None;
+    }
+
+    // Helper methods for element selection and manipulation
+    fn is_element_at_position(&self, element: &DrawingElement, pos: [f32; 2]) -> bool {
+        match element {
+            DrawingElement::Text { position, content, size, .. } => {
+                // Estimate text bounds based on content and size
+                let char_width = size * 0.6; // Approximate character width
+                let text_width = content.len() as f32 * char_width;
+                let text_height = size * 1.2; // Text height with some padding
+                
+                // Check if click is within text bounds
+                pos[0] >= position[0] - 5.0 && pos[0] <= position[0] + text_width + 5.0 &&
+                pos[1] >= position[1] - text_height && pos[1] <= position[1] + 5.0
+            }
+            DrawingElement::TextBox { pos: element_pos, size, .. } => {
+                pos[0] >= element_pos[0] && pos[0] <= element_pos[0] + size[0] &&
+                pos[1] >= element_pos[1] && pos[1] <= element_pos[1] + size[1]
+            }
+            DrawingElement::Rectangle { position, size, .. } => {
+                pos[0] >= position[0] && pos[0] <= position[0] + size[0] &&
+                pos[1] >= position[1] && pos[1] <= position[1] + size[1]
+            }
+            DrawingElement::Circle { center, radius, .. } => {
+                let distance = ((pos[0] - center[0]).powi(2) + (pos[1] - center[1]).powi(2)).sqrt();
+                distance <= *radius
+            }
+            DrawingElement::Arrow { start, end, width, .. } => {
+                // Check if point is near the arrow line
+                self.point_to_line_distance(pos, *start, *end) <= width * 2.0
+            }
+            DrawingElement::Stroke { points, width, .. } => {
+                // Check if point is near any segment of the stroke
+                for i in 0..points.len().saturating_sub(1) {
+                    if self.point_to_line_distance(pos, points[i], points[i + 1]) <= width * 2.0 {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+    
+    fn get_element_position(&self, element: &DrawingElement) -> [f32; 2] {
+        match element {
+            DrawingElement::Text { position, .. } => *position,
+            DrawingElement::TextBox { pos, .. } => *pos,
+            DrawingElement::Rectangle { position, .. } => *position,
+            DrawingElement::Circle { center, .. } => *center,
+            DrawingElement::Arrow { start, .. } => *start,
+            DrawingElement::Stroke { points, .. } => {
+                if points.is_empty() {
+                    [0.0, 0.0]
+                } else {
+                    points[0]
+                }
+            }
+        }
+    }
+    
+    fn move_element(&mut self, idx: usize, orig_pos: [f32; 2], dx: f32, dy: f32) {
+        if let Some(element) = self.elements.get_mut(idx) {
+            match element {
+                DrawingElement::Text { position, .. } => {
+                    position[0] = orig_pos[0] + dx;
+                    position[1] = orig_pos[1] + dy;
+                }
+                DrawingElement::TextBox { pos, .. } => {
+                    pos[0] = orig_pos[0] + dx;
+                    pos[1] = orig_pos[1] + dy;
+                }
+                DrawingElement::Rectangle { position, .. } => {
+                    position[0] = orig_pos[0] + dx;
+                    position[1] = orig_pos[1] + dy;
+                }
+                DrawingElement::Circle { center, .. } => {
+                    center[0] = orig_pos[0] + dx;
+                    center[1] = orig_pos[1] + dy;
+                }
+                DrawingElement::Arrow { start, end, .. } => {
+                    let arrow_dx = end[0] - start[0];
+                    let arrow_dy = end[1] - start[1];
+                    start[0] = orig_pos[0] + dx;
+                    start[1] = orig_pos[1] + dy;
+                    end[0] = start[0] + arrow_dx;
+                    end[1] = start[1] + arrow_dy;
+                }
+                DrawingElement::Stroke { points, .. } => {
+                    if !points.is_empty() {
+                        let stroke_dx = orig_pos[0] + dx - points[0][0];
+                        let stroke_dy = orig_pos[1] + dy - points[0][1];
+                        for point in points.iter_mut() {
+                            point[0] += stroke_dx;
+                            point[1] += stroke_dy;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    fn point_to_line_distance(&self, point: [f32; 2], line_start: [f32; 2], line_end: [f32; 2]) -> f32 {
+        let line_length_squared = (line_end[0] - line_start[0]).powi(2) + (line_end[1] - line_start[1]).powi(2);
+        
+        if line_length_squared == 0.0 {
+            // Line is actually a point
+            return ((point[0] - line_start[0]).powi(2) + (point[1] - line_start[1]).powi(2)).sqrt();
+        }
+        
+        let t = ((point[0] - line_start[0]) * (line_end[0] - line_start[0]) + 
+                 (point[1] - line_start[1]) * (line_end[1] - line_start[1])) / line_length_squared;
+        
+        let t = t.clamp(0.0, 1.0);
+        
+        let projection = [
+            line_start[0] + t * (line_end[0] - line_start[0]),
+            line_start[1] + t * (line_end[1] - line_start[1])
+        ];
+        
+        ((point[0] - projection[0]).powi(2) + (point[1] - projection[1]).powi(2)).sqrt()
     }
 }
