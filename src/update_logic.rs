@@ -3,7 +3,7 @@ use crate::drawing::DrawingElement;
 use crate::vertex::Vertex;
 use wgpu::util::DeviceExt;
 
-impl<'a> State<'a> {
+impl State {
     pub fn update(&mut self) {
         if self.typing.active {
             let elapsed = self.typing.blink_timer.elapsed();

@@ -12,7 +12,7 @@ cfg_if::cfg_if! {
     }
 }
 
-impl<'a> State<'a> {
+impl State {
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;

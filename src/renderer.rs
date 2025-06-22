@@ -1,6 +1,6 @@
 use crate::app_state::State;
 
-impl<'a> State<'a> {
+impl State {
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.gpu.surface.get_current_texture()?;
         let view = output

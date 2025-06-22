@@ -18,8 +18,8 @@ pub enum UserInputState {
     Dragging,
 }
 
-pub struct GpuContext<'a> {
-    pub surface: Surface<'a>,
+pub struct GpuContext {
+    pub surface: Surface<'static>,
     pub device: Device,
     pub queue: Queue,
     pub config: SurfaceConfiguration,

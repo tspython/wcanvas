@@ -7,6 +7,8 @@ use crate::state::{
 use crate::text_renderer::TextRenderer;
 use crate::ui::UiRenderer;
 use crate::vertex::Vertex;
+use std::sync::Arc;
+use winit::dpi::PhysicalSize;
 
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
@@ -18,11 +20,11 @@ cfg_if::cfg_if! {
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-pub struct State<'a> {
-    pub window: &'a Window,
-    pub size: winit::dpi::PhysicalSize<u32>,
+pub struct State {
+    pub window: Arc<Window>,
+    pub size: PhysicalSize<u32>,
 
-    pub gpu: GpuContext<'a>,
+    pub gpu: GpuContext,
     pub canvas: Canvas,
     pub geometry: GeometryBuffers,
     pub ui_geo: UiBuffers,
@@ -39,8 +41,8 @@ pub struct State<'a> {
     pub ui_screen: UiScreenBuffers,
 }
 
-impl<'a> State<'a> {
-    pub async fn new(window: &'a Window) -> State<'a> {
+impl State {
+    pub async fn new(window: Arc<Window>) -> State {
         let mut size = window.inner_size();
         
         #[cfg(target_arch = "wasm32")]
@@ -58,7 +60,7 @@ impl<'a> State<'a> {
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window).unwrap();
+        let surface = instance.create_surface(window.clone()).unwrap();
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -102,6 +104,8 @@ impl<'a> State<'a> {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
+
+        surface.configure(&device, &config);
 
         let mut uniforms = Uniforms::new();
         let canvas_transform = CanvasTransform::new();
@@ -256,8 +260,6 @@ impl<'a> State<'a> {
             cache: None,
         });
 
-        surface.configure(&device, &config);
-
         let surface_format = config.format;
 
         let gpu = GpuContext {
@@ -354,7 +356,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn window(&self) -> &Window {
-        self.window
+    pub fn window(&self) -> &Arc<Window> {
+        &self.window
     }
 } 
