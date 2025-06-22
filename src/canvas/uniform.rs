@@ -1,5 +1,6 @@
 use crate::canvas::CanvasTransform;
-use cgmath::SquareMatrix;
+use crate::math::{Mat4, Vec3, ortho};
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Uniforms {
@@ -9,7 +10,7 @@ pub struct Uniforms {
 impl Uniforms {
     pub fn new() -> Self {
         Self {
-            transform: cgmath::Matrix4::identity().into(),
+            transform: Mat4::identity().into(),
         }
     }
 
@@ -18,14 +19,14 @@ impl Uniforms {
         canvas_transform: &CanvasTransform,
         window_size: (f32, f32),
     ) {
-        let proj = cgmath::ortho(0.0, window_size.0, window_size.1, 0.0, -1.0, 1.0);
+        let proj = ortho(0.0, window_size.0, window_size.1, 0.0, -1.0, 1.0);
 
-        let translate = cgmath::Matrix4::from_translation(cgmath::Vector3::new(
+        let translate = Mat4::from_translation(Vec3::new(
             canvas_transform.offset[0],
             canvas_transform.offset[1],
             0.0,
         ));
-        let scale = cgmath::Matrix4::from_scale(canvas_transform.scale);
+        let scale = Mat4::from_scale(canvas_transform.scale);
 
         self.transform = (proj * translate * scale).into();
     }
