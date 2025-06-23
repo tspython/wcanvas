@@ -58,7 +58,7 @@ impl State {
             }
         }
 
-        self.text_renderer.draw(&mut encoder, &view, &self.canvas.uniform_bind_group);
+        self.text_renderer.draw(&mut encoder, &view, &self.canvas.uniform_bind_group, &self.ui_screen.bind_group);
         self.gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 

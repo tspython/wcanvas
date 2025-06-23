@@ -21,7 +21,8 @@ impl State {
         self.update_buffers();
 
         let (ui_vertices, ui_indices) = self.ui_renderer.generate_ui_vertices(
-            self.current_tool, 
+            self.current_tool,
+            self.current_color,
             (self.size.width as f32, self.size.height as f32),
             self.canvas.transform.scale
         );
@@ -60,21 +61,27 @@ impl State {
             });
         }
         
-        // Add zoom indicator text (in screen space coordinates)
-        let zoom_percent = (self.canvas.transform.scale * 100.0) as i32;
-        let zoom_text = format!("{}%", zoom_percent);
-        drawing_elements.push(DrawingElement::Text {
-            position: [25.0, self.size.height as f32 - 25.0], // Bottom left, adjusted for screen space
-            content: zoom_text,
-            color: [1.0, 1.0, 1.0, 1.0], // White text
-            size: 14.0,
-        });
         self.text_renderer.prepare(
             &self.gpu.device,
             &self.gpu.queue,
             &drawing_elements,
             (self.size.width as f32, self.size.height as f32),
         );
+
+        self.text_renderer.clear_screen();
+        let zoom_percent = (self.canvas.transform.scale * 100.0) as i32;
+        let zoom_text = format!("{}%", zoom_percent);
+        let screen_pos = [25.0, self.size.height as f32 - 25.0];
+        self.text_renderer.add_screen_label(
+            &self.gpu.device,
+            &self.gpu.queue,
+            &zoom_text,
+            screen_pos,
+            14.0,
+            [1.0, 1.0, 1.0, 1.0],
+        );
+        
+        self.text_renderer.build_screen_buffers(&self.gpu.device);
     }
 
     fn update_buffers(&mut self) {

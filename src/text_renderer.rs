@@ -57,15 +57,22 @@ pub struct TextRenderer {
     next_y: u32,
     row_h: u32,
     pipeline: wgpu::RenderPipeline,
+    screen_pipeline: Option<wgpu::RenderPipeline>,
     bind_group: wgpu::BindGroup,
     vertices: Vec<TextVertex>,
     indices: Vec<u16>,
     vbuf: Option<wgpu::Buffer>,
     ibuf: Option<wgpu::Buffer>,
+    screen_vertices: Vec<TextVertex>,
+    screen_indices: Vec<u16>,
+    screen_vbuf: Option<wgpu::Buffer>,
+    screen_ibuf: Option<wgpu::Buffer>,
 }
 
 impl TextRenderer {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, fmt: wgpu::TextureFormat, canvas_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, fmt: wgpu::TextureFormat,
+               canvas_bind_group_layout: &wgpu::BindGroupLayout,
+               ui_screen_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("glyph atlas"),
             size: wgpu::Extent3d {
@@ -82,8 +89,8 @@ impl TextRenderer {
         });
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -158,6 +165,41 @@ impl TextRenderer {
             cache: None,
         });
 
+        let screen_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("screen-text shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../data/shaders/screen_text_shader.wgsl").into()),
+        });
+        let screen_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("screen-text-pl"),
+            bind_group_layouts: &[ui_screen_bind_group_layout, &bgl],
+            push_constant_ranges: &[],
+        });
+        let screen_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("screen-text-pipe"),
+            layout: Some(&screen_pl_layout),
+            vertex: wgpu::VertexState {
+                module: &screen_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[TextVertex::desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &screen_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: fmt,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         Self {
             font: FontArc::try_from_slice(include_bytes!("../data/fonts/Virgil.ttf"))
                 .unwrap(),
@@ -169,11 +211,16 @@ impl TextRenderer {
             next_y: 0,
             row_h: 0,
             pipeline,
+            screen_pipeline: Some(screen_pipeline),
             bind_group,
             vertices: Vec::new(),
             indices: Vec::new(),
             vbuf: None,
             ibuf: None,
+            screen_vertices: Vec::new(),
+            screen_indices: Vec::new(),
+            screen_vbuf: None,
+            screen_ibuf: None,
         }
     }
 
@@ -380,8 +427,8 @@ impl TextRenderer {
         }
     }
 
-    pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, canvas_bind_group: &wgpu::BindGroup) {
-        if let (Some(vb), Some(ib)) = (&self.vbuf, &self.ibuf) {
+    pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, canvas_bind_group: &wgpu::BindGroup, ui_screen_bind_group: &wgpu::BindGroup) {
+        if self.vbuf.is_some() || self.screen_vbuf.is_some() {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("text pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -396,12 +443,89 @@ impl TextRenderer {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            rp.set_pipeline(&self.pipeline);
-            rp.set_bind_group(0, canvas_bind_group, &[]);
+
+            if let (Some(vb), Some(ib)) = (&self.vbuf, &self.ibuf) {
+                rp.set_pipeline(&self.pipeline);
+                rp.set_bind_group(0, canvas_bind_group, &[]);
+                rp.set_bind_group(1, &self.bind_group, &[]);
+                rp.set_vertex_buffer(0, vb.slice(..));
+                rp.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
+                rp.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
+            }
+
+            self.draw_screen(&mut rp, ui_screen_bind_group);
+        }
+    }
+
+    pub fn clear_screen(&mut self) {
+        self.screen_vertices.clear();
+        self.screen_indices.clear();
+    }
+
+    pub fn add_screen_label(&mut self,
+        device:&wgpu::Device,
+        queue:&wgpu::Queue,
+        text:&str,
+        pos_screen:[f32;2],
+        px:f32,
+        color:[f32;4]) {
+
+        let mut pen_x = pos_screen[0];
+        let px_u32 = px as u32;
+        let scale = ab_glyph::PxScale::from(px);
+        let mut prev_gid: Option<ab_glyph::GlyphId>=None;
+        let mut off: u16 = self.screen_vertices.len() as u16;
+
+        for ch in text.chars() {
+            let gid = self.font.glyph_id(ch);
+            if let Some(prev) = prev_gid {
+                let kern = self.font.as_scaled(scale).kern(prev, gid);
+                pen_x += kern;
+            }
+            let info = {*self.cache_glyph(device, queue, gid, px_u32)};
+            let adv = self.font.as_scaled(scale).h_advance(gid);
+            if info.size[0]==0.0 || info.size[1]==0.0 {pen_x += adv; prev_gid=Some(gid); continue;}
+            let x0 = pen_x + info.bearing[0];
+            let y0 = pos_screen[1] + info.bearing[1];
+            let x1 = x0 + info.size[0];
+            let y1 = y0 + info.size[1];
+            let [u0,v0]=info.uv_min; let [u1,v1]=info.uv_max;
+            self.screen_vertices.extend_from_slice(&[
+                TextVertex{pos:[x0,y0],uv:[u0,v0],color},
+                TextVertex{pos:[x1,y0],uv:[u1,v0],color},
+                TextVertex{pos:[x1,y1],uv:[u1,v1],color},
+                TextVertex{pos:[x0,y1],uv:[u0,v1],color},
+            ]);
+            self.screen_indices.extend_from_slice(&[off,off+1,off+2,off,off+2,off+3]);
+            off += 4;
+            pen_x += adv;
+            prev_gid=Some(gid);
+        }
+    }
+
+    pub fn build_screen_buffers(&mut self, device: &wgpu::Device) {
+        if !self.screen_vertices.is_empty() {
+            self.screen_vbuf = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("screen-text vbuf"),
+                contents: bytemuck::cast_slice(&self.screen_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }));
+            self.screen_ibuf = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("screen-text ibuf"),
+                contents: bytemuck::cast_slice(&self.screen_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }));
+        }
+    }
+
+    pub fn draw_screen(&self, rp:&mut wgpu::RenderPass<'_>, ui_screen_bind_group:&wgpu::BindGroup) {
+        if let (Some(pipe), Some(vb), Some(ib)) = (self.screen_pipeline.as_ref(), &self.screen_vbuf, &self.screen_ibuf) {
+            rp.set_pipeline(pipe);
+            rp.set_bind_group(0, ui_screen_bind_group, &[]);
             rp.set_bind_group(1, &self.bind_group, &[]);
             rp.set_vertex_buffer(0, vb.slice(..));
             rp.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
-            rp.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
+            rp.draw_indexed(0..self.screen_indices.len() as u32, 0, 0..1);
         }
     }
 }

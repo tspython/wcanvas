@@ -13,6 +13,18 @@ cfg_if::cfg_if! {
 }
 
 impl State {
+    fn is_mouse_in_titlebar(&self, mouse_pos: [f32; 2]) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            // Keep titlebar detection area larger to prevent accidental drawing
+            mouse_pos[1] < 22.0
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
@@ -76,10 +88,22 @@ impl State {
                                     return true;
                                 }
                                 
+                                if let Some(color) = self.ui_renderer.handle_color_click(
+                                    self.input.mouse_pos
+                                ) {
+                                    self.current_color = color;
+                                    return true;
+                                }
+                                
                                 if self.ui_renderer.is_mouse_over_ui(
                                     self.input.mouse_pos, 
                                     (self.size.width as f32, self.size.height as f32)
                                 ) {
+                                    return true;
+                                }
+
+                                // Prevent drawing in titlebar area on macOS
+                                if self.is_mouse_in_titlebar(self.input.mouse_pos) {
                                     return true;
                                 }
 
@@ -198,7 +222,7 @@ impl State {
                     if self.ui_renderer.is_mouse_over_ui(
                         self.input.mouse_pos, 
                         (self.size.width as f32, self.size.height as f32)
-                    ) {
+                    ) || self.is_mouse_in_titlebar(self.input.mouse_pos) {
                         self.finish_drawing();
                         self.input.state = crate::state::UserInputState::Idle;
                         return true;

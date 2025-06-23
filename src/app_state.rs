@@ -169,7 +169,7 @@ impl State {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -228,7 +228,7 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &ui_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
+                buffers: &[crate::vertex::UiVertex::desc()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -236,7 +236,7 @@ impl State {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -245,7 +245,7 @@ impl State {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
@@ -310,7 +310,7 @@ impl State {
         };
 
         let ui_renderer = UiRenderer::new();
-        let text_renderer = TextRenderer::new(&gpu.device, &gpu.queue, surface_format, &uniform_bind_group_layout);
+        let text_renderer = TextRenderer::new(&gpu.device, &gpu.queue, surface_format, &uniform_bind_group_layout, &ui_uniform_bind_group_layout);
 
         let ui_screen_uniforms = UiScreenUniforms {
             screen_size: [size.width as f32, size.height as f32],
@@ -348,7 +348,7 @@ impl State {
             typing,
             elements: Vec::new(),
             current_tool: Tool::Pen,
-            current_color: [0.0, 0.0, 0.0, 1.0],
+            current_color: [0.0, 0.0, 0.0, 1.0], 
             stroke_width: 2.0,
             ui_renderer,
             text_renderer,

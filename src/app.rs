@@ -8,6 +8,9 @@ use winit::{
     window::{Window, WindowId},
 };
 
+#[cfg(target_os = "macos")]
+use winit::platform::macos::WindowAttributesExtMacOS;
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::{prelude::*, JsCast};
 
@@ -18,8 +21,16 @@ struct App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_none() {
-            let window_attributes = Window::default_attributes()
+            let mut window_attributes = Window::default_attributes()
                 .with_title("wcanvas");
+            
+            #[cfg(target_os = "macos")]
+            {
+                window_attributes = window_attributes
+                    .with_titlebar_transparent(true)
+                    .with_title_hidden(false)
+                    .with_fullsize_content_view(true);
+            }
             
             let window = event_loop.create_window(window_attributes).unwrap();
 

@@ -21,8 +21,7 @@ struct VSOut {
 @vertex
 fn vs_main(v: VSIn) -> VSOut {
     var o: VSOut;
-    
-    // Apply canvas transformation to the position
+
     let transformed_pos = canvas.transform * vec4<f32>(v.pos, 0.0, 1.0);
     o.pos = transformed_pos;
     o.uv  = v.uv;
