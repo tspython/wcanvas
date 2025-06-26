@@ -1,0 +1,180 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release'
+        required: true
+        default: 'manual'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-native:
+    name: Build Native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: wcanvas-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: wcanvas-macos-aarch64
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Install dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        # No additional dependencies needed for basic build
+
+    - name: Build
+      run: |
+        cargo build --release --target ${{ matrix.target }}
+
+    - name: Create artifact directory
+      run: mkdir -p artifacts
+
+    - name: Copy binary and assets (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        cp target/${{ matrix.target }}/release/wcanvas artifacts/wcanvas
+        cp -r data artifacts/
+        cp index.html artifacts/
+        chmod +x artifacts/wcanvas
+
+    - name: Create archive
+      run: |
+        cd artifacts
+        tar -czf ../${{ matrix.artifact_name }}.tar.gz *
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: ${{ matrix.artifact_name }}.tar.gz
+
+  build-web:
+    name: Build WebAssembly
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Install wasm-pack
+      run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+    - name: Build WebAssembly
+      run: |
+        wasm-pack build --target web --out-dir pkg --release
+
+    - name: Create web artifact
+      run: |
+        mkdir -p web-dist
+        cp -r pkg web-dist/
+        cp -r data web-dist/
+        cp index.html web-dist/
+        cd web-dist
+        tar -czf ../wcanvas-web.tar.gz *
+
+    - name: Upload web artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: wcanvas-web
+        path: wcanvas-web.tar.gz
+
+  release:
+    name: Create Release
+    needs: [build-native, build-web]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+
+    - name: Display structure of downloaded files
+      run: ls -la artifacts/
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name || github.event.inputs.version }}
+        release_name: WCanvas ${{ github.ref_name || github.event.inputs.version }}
+        body: |
+          ## Changes
+          - Built for macOS (x86_64 and ARM64)
+          - WebAssembly build for web browsers
+          
+          ## Downloads
+          - **macOS (Intel)**: wcanvas-macos-x86_64.tar.gz
+          - **macOS (Apple Silicon)**: wcanvas-macos-aarch64.tar.gz
+          - **Web**: wcanvas-web.tar.gz
+          
+          ## Usage
+          ### Native (macOS)
+          1. Download the appropriate archive for your system
+          2. Extract the archive
+          3. Run `./wcanvas`
+          
+          ### Web
+          1. Download wcanvas-web.tar.gz
+          2. Extract to a web server directory
+          3. Open index.html in a modern web browser
+        draft: false
+        prerelease: false
+
+    - name: Upload macOS x86_64 Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./artifacts/wcanvas-macos-x86_64/wcanvas-macos-x86_64.tar.gz
+        asset_name: wcanvas-macos-x86_64.tar.gz
+        asset_content_type: application/gzip
+
+    - name: Upload macOS ARM64 Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./artifacts/wcanvas-macos-aarch64/wcanvas-macos-aarch64.tar.gz
+        asset_name: wcanvas-macos-aarch64.tar.gz
+        asset_content_type: application/gzip
+
+    - name: Upload Web Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./artifacts/wcanvas-web/wcanvas-web.tar.gz
+        asset_name: wcanvas-web.tar.gz
+        asset_content_type: application/gzip 
