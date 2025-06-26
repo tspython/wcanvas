@@ -67,43 +67,9 @@ jobs:
         name: ${{ matrix.artifact_name }}
         path: ${{ matrix.artifact_name }}.tar.gz
 
-  build-web:
-    name: Build WebAssembly
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: wasm32-unknown-unknown
-
-    - name: Install wasm-pack
-      run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-    - name: Build WebAssembly
-      run: |
-        wasm-pack build --target web --out-dir pkg --release
-
-    - name: Create web artifact
-      run: |
-        mkdir -p web-dist
-        cp -r pkg web-dist/
-        cp -r data web-dist/
-        cp index.html web-dist/
-        cd web-dist
-        tar -czf ../wcanvas-web.tar.gz *
-
-    - name: Upload web artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: wcanvas-web
-        path: wcanvas-web.tar.gz
-
   release:
     name: Create Release
-    needs: [build-native, build-web]
+    needs: [build-native]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     
@@ -129,23 +95,15 @@ jobs:
         body: |
           ## Changes
           - Built for macOS (x86_64 and ARM64)
-          - WebAssembly build for web browsers
           
           ## Downloads
           - **macOS (Intel)**: wcanvas-macos-x86_64.tar.gz
           - **macOS (Apple Silicon)**: wcanvas-macos-aarch64.tar.gz
-          - **Web**: wcanvas-web.tar.gz
           
           ## Usage
-          ### Native (macOS)
           1. Download the appropriate archive for your system
           2. Extract the archive
           3. Run `./wcanvas`
-          
-          ### Web
-          1. Download wcanvas-web.tar.gz
-          2. Extract to a web server directory
-          3. Open index.html in a modern web browser
         draft: false
         prerelease: false
 
@@ -169,12 +127,4 @@ jobs:
         asset_name: wcanvas-macos-aarch64.tar.gz
         asset_content_type: application/gzip
 
-    - name: Upload Web Release Asset
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./artifacts/wcanvas-web/wcanvas-web.tar.gz
-        asset_name: wcanvas-web.tar.gz
-        asset_content_type: application/gzip 
+ 
