@@ -48,6 +48,11 @@ impl State {
         }
 
         let mut drawing_elements = self.elements.clone();
+        
+        if let Some(preview) = &self.input.preview_element {
+            drawing_elements.push(preview.clone());
+        }
+        
         if self.typing.active {
             let mut display_text = self.typing.buffer.clone();
             if self.typing.cursor_visible {
@@ -89,7 +94,12 @@ impl State {
         let mut indices = Vec::new();
         let mut index_offset = 0u16;
 
-        for (element_index, element) in self.elements.iter().enumerate() {
+        let mut all_elements = self.elements.clone();
+        if let Some(preview) = &self.input.preview_element {
+            all_elements.push(preview.clone());
+        }
+
+        for (element_index, element) in all_elements.iter().enumerate() {
             match element {
                 DrawingElement::Stroke {
                     points,

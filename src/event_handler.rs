@@ -230,6 +230,8 @@ impl State {
                     
                     let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     self.input.current_stroke.push(canvas_pos);
+                } else if self.input.state == Drawing {
+                    self.update_preview_element();
                 } else if self.input.state == Dragging {
                     let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     if let (Some(idx), Some(start_mouse), Some(orig_pos)) =
@@ -484,6 +486,61 @@ impl State {
 
         self.input.current_stroke.clear();
         self.input.drag_start = None;
+        self.input.preview_element = None;
+    }
+
+    fn update_preview_element(&mut self) {
+        if self.input.state != Drawing {
+            self.input.preview_element = None;
+            return;
+        }
+
+        match self.current_tool {
+            Tool::Rectangle => {
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                    let position = [start[0].min(end[0]), start[1].min(end[1])];
+                    let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
+
+                    self.input.preview_element = Some(DrawingElement::Rectangle {
+                        position,
+                        size,
+                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5], // Make semi-transparent
+                        fill: false,
+                        stroke_width: self.stroke_width,
+                    });
+                }
+            }
+            Tool::Circle => {
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                    let radius = ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt();
+
+                    self.input.preview_element = Some(DrawingElement::Circle {
+                        center: start,
+                        radius,
+                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5], // Make semi-transparent
+                        fill: false,
+                        stroke_width: self.stroke_width,
+                    });
+                }
+            }
+            Tool::Arrow => {
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+
+                    self.input.preview_element = Some(DrawingElement::Arrow {
+                        start,
+                        end,
+                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5], // Make semi-transparent
+                        width: self.stroke_width,
+                    });
+                }
+            }
+            _ => {
+                self.input.preview_element = None;
+            }
+        }
     }
 
     // Helper methods for element selection and manipulation

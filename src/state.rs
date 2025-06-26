@@ -9,6 +9,7 @@ use wgpu::{BindGroup, Buffer, Device, Queue, RenderPipeline, Surface, SurfaceCon
 use winit::keyboard::ModifiersState;
 
 use crate::canvas::{CanvasTransform, Uniforms};
+use crate::drawing::DrawingElement;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserInputState {
@@ -67,6 +68,7 @@ pub struct InputState {
     pub drag_start: Option<[f32; 2]>,
     pub selected_element: Option<usize>,
     pub element_start_pos: Option<[f32; 2]>,
+    pub preview_element: Option<DrawingElement>,
 }
 
 pub struct TextInput {

@@ -299,6 +299,7 @@ impl State {
             drag_start: None,
             selected_element: None,
             element_start_pos: None,
+            preview_element: None,
         };
 
         let typing = TextInput {
