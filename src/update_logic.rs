@@ -152,79 +152,95 @@ impl State {
                     color,
                     fill,
                     stroke_width,
+                    rough_style,
                 } => {
-                    if *fill {
-                        vertices.push(Vertex {
-                            position: *position,
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [position[0] + size[0], position[1]],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [position[0] + size[0], position[1] + size[1]],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [position[0], position[1] + size[1]],
-                            color: *color,
-                        });
-
-                        indices.extend_from_slice(&[
-                            index_offset,
-                            index_offset + 1,
-                            index_offset + 2,
-                            index_offset,
-                            index_offset + 2,
-                            index_offset + 3,
-                        ]);
-                        index_offset += 4;
+                    if let Some(rough_options) = rough_style {
+                        let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
+                        let rough_lines = generator.rough_rectangle(*position, *size, rough_options);
+                        
+                        for line_points in rough_lines {
+                            let (line_vertices, line_indices) = generator.points_to_vertices(&line_points, *color, rough_options.stroke_width);
+                            
+                            let offset_indices: Vec<u16> = line_indices.iter().map(|&i| i + index_offset).collect();
+                            
+                            vertices.extend(line_vertices);
+                            indices.extend(offset_indices);
+                            index_offset += line_points.len().saturating_sub(1) as u16 * 4;
+                        }
                     } else {
-                        let corners = [
-                            *position,
-                            [position[0] + size[0], position[1]],
-                            [position[0] + size[0], position[1] + size[1]],
-                            [position[0], position[1] + size[1]],
-                        ];
+                        if *fill {
+                            vertices.push(Vertex {
+                                position: *position,
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [position[0] + size[0], position[1]],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [position[0] + size[0], position[1] + size[1]],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [position[0], position[1] + size[1]],
+                                color: *color,
+                            });
 
-                        for i in 0..4 {
-                            let p1 = corners[i];
-                            let p2 = corners[(i + 1) % 4];
+                            indices.extend_from_slice(&[
+                                index_offset,
+                                index_offset + 1,
+                                index_offset + 2,
+                                index_offset,
+                                index_offset + 2,
+                                index_offset + 3,
+                            ]);
+                            index_offset += 4;
+                        } else {
+                            let corners = [
+                                *position,
+                                [position[0] + size[0], position[1]],
+                                [position[0] + size[0], position[1] + size[1]],
+                                [position[0], position[1] + size[1]],
+                            ];
 
-                            let dx = p2[0] - p1[0];
-                            let dy = p2[1] - p1[1];
-                            let len = (dx * dx + dy * dy).sqrt();
-                            if len > 0.0 {
-                                let nx = -dy / len * stroke_width * 0.5;
-                                let ny = dx / len * stroke_width * 0.5;
+                            for i in 0..4 {
+                                let p1 = corners[i];
+                                let p2 = corners[(i + 1) % 4];
 
-                                vertices.push(Vertex {
-                                    position: [p1[0] - nx, p1[1] - ny],
-                                    color: *color,
-                                });
-                                vertices.push(Vertex {
-                                    position: [p1[0] + nx, p1[1] + ny],
-                                    color: *color,
-                                });
-                                vertices.push(Vertex {
-                                    position: [p2[0] + nx, p2[1] + ny],
-                                    color: *color,
-                                });
-                                vertices.push(Vertex {
-                                    position: [p2[0] - nx, p2[1] - ny],
-                                    color: *color,
-                                });
+                                let dx = p2[0] - p1[0];
+                                let dy = p2[1] - p1[1];
+                                let len = (dx * dx + dy * dy).sqrt();
+                                if len > 0.0 {
+                                    let nx = -dy / len * stroke_width * 0.5;
+                                    let ny = dx / len * stroke_width * 0.5;
 
-                                indices.extend_from_slice(&[
-                                    index_offset,
-                                    index_offset + 1,
-                                    index_offset + 2,
-                                    index_offset,
-                                    index_offset + 2,
-                                    index_offset + 3,
-                                ]);
-                                index_offset += 4;
+                                    vertices.push(Vertex {
+                                        position: [p1[0] - nx, p1[1] - ny],
+                                        color: *color,
+                                    });
+                                    vertices.push(Vertex {
+                                        position: [p1[0] + nx, p1[1] + ny],
+                                        color: *color,
+                                    });
+                                    vertices.push(Vertex {
+                                        position: [p2[0] + nx, p2[1] + ny],
+                                        color: *color,
+                                    });
+                                    vertices.push(Vertex {
+                                        position: [p2[0] - nx, p2[1] - ny],
+                                        color: *color,
+                                    });
+
+                                    indices.extend_from_slice(&[
+                                        index_offset,
+                                        index_offset + 1,
+                                        index_offset + 2,
+                                        index_offset,
+                                        index_offset + 2,
+                                        index_offset + 3,
+                                    ]);
+                                    index_offset += 4;
+                                }
                             }
                         }
                     }
@@ -235,85 +251,101 @@ impl State {
                     color,
                     fill,
                     stroke_width,
+                    rough_style,
                 } => {
-                    const SEGMENTS: u32 = 32;
+                    if let Some(rough_options) = rough_style {
+                        let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
+                        let diameter = *radius * 2.0;
+                        let rough_lines = generator.rough_ellipse(*center, diameter, diameter, rough_options);
+                        
+                        for line_points in rough_lines {
+                            let (line_vertices, line_indices) = generator.points_to_vertices(&line_points, *color, rough_options.stroke_width);
+                            
+                            let offset_indices: Vec<u16> = line_indices.iter().map(|&i| i + index_offset).collect();
+                            
+                            vertices.extend(line_vertices);
+                            indices.extend(offset_indices);
+                            index_offset += line_points.len().saturating_sub(1) as u16 * 4;
+                        }
+                    } else {
+                        const SEGMENTS: u32 = 32;
 
-                    if *fill {
-                        let center_index = index_offset;
-                        vertices.push(Vertex {
-                            position: *center,
-                            color: *color,
-                        });
-                        index_offset += 1;
-
-                        for i in 0..SEGMENTS {
-                            let angle = (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
+                        if *fill {
+                            let center_index = index_offset;
                             vertices.push(Vertex {
-                                position: [
-                                    center[0] + angle.cos() * radius,
-                                    center[1] + angle.sin() * radius,
-                                ],
+                                position: *center,
                                 color: *color,
                             });
-                        }
+                            index_offset += 1;
 
-                        for i in 0..SEGMENTS {
-                            indices.extend_from_slice(&[
-                                center_index,
-                                center_index + 1 + i as u16,
-                                center_index + 1 + ((i + 1) % SEGMENTS) as u16,
-                            ]);
-                        }
-                        index_offset += SEGMENTS as u16;
-                    } else {
-                        for i in 0..SEGMENTS {
-                            let angle1 = (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
-                            let angle2 =
-                                ((i + 1) as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
-
-                            let p1 = [
-                                center[0] + angle1.cos() * radius,
-                                center[1] + angle1.sin() * radius,
-                            ];
-                            let p2 = [
-                                center[0] + angle2.cos() * radius,
-                                center[1] + angle2.sin() * radius,
-                            ];
-
-                            // Create thick line segment
-                            let dx = p2[0] - p1[0];
-                            let dy = p2[1] - p1[1];
-                            let len = (dx * dx + dy * dy).sqrt();
-                            if len > 0.0 {
-                                let nx = -dy / len * stroke_width * 0.5;
-                                let ny = dx / len * stroke_width * 0.5;
-
+                            for i in 0..SEGMENTS {
+                                let angle = (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
                                 vertices.push(Vertex {
-                                    position: [p1[0] - nx, p1[1] - ny],
+                                    position: [
+                                        center[0] + angle.cos() * radius,
+                                        center[1] + angle.sin() * radius,
+                                    ],
                                     color: *color,
                                 });
-                                vertices.push(Vertex {
-                                    position: [p1[0] + nx, p1[1] + ny],
-                                    color: *color,
-                                });
-                                vertices.push(Vertex {
-                                    position: [p2[0] + nx, p2[1] + ny],
-                                    color: *color,
-                                });
-                                vertices.push(Vertex {
-                                    position: [p2[0] - nx, p2[1] - ny],
-                                    color: *color,
-                                });
+                            }
 
+                            for i in 0..SEGMENTS {
                                 indices.extend_from_slice(&[
-                                    index_offset,
-                                    index_offset + 1,
-                                    index_offset + 2,
-                                    index_offset,
-                                    index_offset + 2,
-                                    index_offset + 3,
+                                    center_index,
+                                    center_index + 1 + i as u16,
+                                    center_index + 1 + ((i + 1) % SEGMENTS) as u16,
                                 ]);
-                                index_offset += 4;
+                            }
+                            index_offset += SEGMENTS as u16;
+                        } else {
+                            for i in 0..SEGMENTS {
+                                let angle1 = (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
+                                let angle2 =
+                                    ((i + 1) as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
+
+                                let p1 = [
+                                    center[0] + angle1.cos() * radius,
+                                    center[1] + angle1.sin() * radius,
+                                ];
+                                let p2 = [
+                                    center[0] + angle2.cos() * radius,
+                                    center[1] + angle2.sin() * radius,
+                                ];
+
+                                let dx = p2[0] - p1[0];
+                                let dy = p2[1] - p1[1];
+                                let len = (dx * dx + dy * dy).sqrt();
+                                if len > 0.0 {
+                                    let nx = -dy / len * stroke_width * 0.5;
+                                    let ny = dx / len * stroke_width * 0.5;
+
+                                    vertices.push(Vertex {
+                                        position: [p1[0] - nx, p1[1] - ny],
+                                        color: *color,
+                                    });
+                                    vertices.push(Vertex {
+                                        position: [p1[0] + nx, p1[1] + ny],
+                                        color: *color,
+                                    });
+                                    vertices.push(Vertex {
+                                        position: [p2[0] + nx, p2[1] + ny],
+                                        color: *color,
+                                    });
+                                    vertices.push(Vertex {
+                                        position: [p2[0] - nx, p2[1] - ny],
+                                        color: *color,
+                                    });
+
+                                    indices.extend_from_slice(&[
+                                        index_offset,
+                                        index_offset + 1,
+                                        index_offset + 2,
+                                        index_offset,
+                                        index_offset + 2,
+                                        index_offset + 3,
+                                    ]);
+                                    index_offset += 4;
+                                }
                             }
                         }
                     }
@@ -323,116 +355,132 @@ impl State {
                     end,
                     color,
                     width,
+                    rough_style,
                 } => {
-                    let dx = end[0] - start[0];
-                    let dy = end[1] - start[1];
-                    let len = (dx * dx + dy * dy).sqrt();
+                    if let Some(rough_options) = rough_style {
+                        let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
+                        let rough_lines = generator.rough_arrow(*start, *end, rough_options);
+                        
+                        for line_points in rough_lines {
+                            let (line_vertices, line_indices) = generator.points_to_vertices(&line_points, *color, rough_options.stroke_width);
+                            
+                            let offset_indices: Vec<u16> = line_indices.iter().map(|&i| i + index_offset).collect();
+                            
+                            vertices.extend(line_vertices);
+                            indices.extend(offset_indices);
+                            index_offset += line_points.len().saturating_sub(1) as u16 * 4;
+                        }
+                    } else {
+                        let dx = end[0] - start[0];
+                        let dy = end[1] - start[1];
+                        let len = (dx * dx + dy * dy).sqrt();
 
-                    if len > 0.0 {
-                        let nx = -dy / len * width * 0.5;
-                        let ny = dx / len * width * 0.5;
+                        if len > 0.0 {
+                            let nx = -dy / len * width * 0.5;
+                            let ny = dx / len * width * 0.5;
 
-                        vertices.push(Vertex {
-                            position: [start[0] - nx, start[1] - ny],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [start[0] + nx, start[1] + ny],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [end[0] + nx, end[1] + ny],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [end[0] - nx, end[1] - ny],
-                            color: *color,
-                        });
+                            vertices.push(Vertex {
+                                position: [start[0] - nx, start[1] - ny],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [start[0] + nx, start[1] + ny],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [end[0] + nx, end[1] + ny],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [end[0] - nx, end[1] - ny],
+                                color: *color,
+                            });
 
-                        indices.extend_from_slice(&[
-                            index_offset,
-                            index_offset + 1,
-                            index_offset + 2,
-                            index_offset,
-                            index_offset + 2,
-                            index_offset + 3,
-                        ]);
-                        index_offset += 4;
+                            indices.extend_from_slice(&[
+                                index_offset,
+                                index_offset + 1,
+                                index_offset + 2,
+                                index_offset,
+                                index_offset + 2,
+                                index_offset + 3,
+                            ]);
+                            index_offset += 4;
 
-                        let head_len = 20.0;
-                        let head_angle = 0.5; 
+                            let head_len = 20.0;
+                            let head_angle = 0.5; 
 
-                        let dir_x = dx / len;
-                        let dir_y = dy / len;
+                            let dir_x = dx / len;
+                            let dir_y = dy / len;
 
-                        let cos_angle = (head_angle as f32).cos();
-                        let sin_angle = (head_angle as f32).sin();
+                            let cos_angle = (head_angle as f32).cos();
+                            let sin_angle = (head_angle as f32).sin();
 
-                        let left_x = end[0] - head_len * (dir_x * cos_angle - dir_y * sin_angle);
-                        let left_y = end[1] - head_len * (dir_y * cos_angle + dir_x * sin_angle);
+                            let left_x = end[0] - head_len * (dir_x * cos_angle - dir_y * sin_angle);
+                            let left_y = end[1] - head_len * (dir_y * cos_angle + dir_x * sin_angle);
 
-                        let right_x = end[0] - head_len * (dir_x * cos_angle + dir_y * sin_angle);
-                        let right_y = end[1] - head_len * (dir_y * cos_angle - dir_x * sin_angle);
+                            let right_x = end[0] - head_len * (dir_x * cos_angle + dir_y * sin_angle);
+                            let right_y = end[1] - head_len * (dir_y * cos_angle - dir_x * sin_angle);
 
-                        let nx1 = -(left_y - end[1]) / head_len * width * 0.5;
-                        let ny1 = (left_x - end[0]) / head_len * width * 0.5;
+                            let nx1 = -(left_y - end[1]) / head_len * width * 0.5;
+                            let ny1 = (left_x - end[0]) / head_len * width * 0.5;
 
-                        vertices.push(Vertex {
-                            position: [end[0] - nx1, end[1] - ny1],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [end[0] + nx1, end[1] + ny1],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [left_x + nx1, left_y + ny1],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [left_x - nx1, left_y - ny1],
-                            color: *color,
-                        });
+                            vertices.push(Vertex {
+                                position: [end[0] - nx1, end[1] - ny1],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [end[0] + nx1, end[1] + ny1],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [left_x + nx1, left_y + ny1],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [left_x - nx1, left_y - ny1],
+                                color: *color,
+                            });
 
-                        indices.extend_from_slice(&[
-                            index_offset,
-                            index_offset + 1,
-                            index_offset + 2,
-                            index_offset,
-                            index_offset + 2,
-                            index_offset + 3,
-                        ]);
-                        index_offset += 4;
+                            indices.extend_from_slice(&[
+                                index_offset,
+                                index_offset + 1,
+                                index_offset + 2,
+                                index_offset,
+                                index_offset + 2,
+                                index_offset + 3,
+                            ]);
+                            index_offset += 4;
 
-                        let nx2 = -(right_y - end[1]) / head_len * width * 0.5;
-                        let ny2 = (right_x - end[0]) / head_len * width * 0.5;
+                            let nx2 = -(right_y - end[1]) / head_len * width * 0.5;
+                            let ny2 = (right_x - end[0]) / head_len * width * 0.5;
 
-                        vertices.push(Vertex {
-                            position: [end[0] - nx2, end[1] - ny2],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [end[0] + nx2, end[1] + ny2],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [right_x + nx2, right_y + ny2],
-                            color: *color,
-                        });
-                        vertices.push(Vertex {
-                            position: [right_x - nx2, right_y - ny2],
-                            color: *color,
-                        });
+                            vertices.push(Vertex {
+                                position: [end[0] - nx2, end[1] - ny2],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [end[0] + nx2, end[1] + ny2],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [right_x + nx2, right_y + ny2],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [right_x - nx2, right_y - ny2],
+                                color: *color,
+                            });
 
-                        indices.extend_from_slice(&[
-                            index_offset,
-                            index_offset + 1,
-                            index_offset + 2,
-                            index_offset,
-                            index_offset + 2,
-                            index_offset + 3,
-                        ]);
-                        index_offset += 4;
+                            indices.extend_from_slice(&[
+                                index_offset,
+                                index_offset + 1,
+                                index_offset + 2,
+                                index_offset,
+                                index_offset + 2,
+                                index_offset + 3,
+                            ]);
+                            index_offset += 4;
+                        }
                     }
                 }
                 DrawingElement::Text { .. } => {}

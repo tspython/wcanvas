@@ -1,6 +1,7 @@
 use crate::app_state::State;
 use crate::drawing::{DrawingElement, Tool};
 use crate::state::UserInputState::{Dragging, Drawing, Idle, Panning};
+use rand::Rng;
 
 use winit::event::*;
 
@@ -16,7 +17,6 @@ impl State {
     fn is_mouse_in_titlebar(&self, mouse_pos: [f32; 2]) -> bool {
         #[cfg(target_os = "macos")]
         {
-            // Keep titlebar detection area larger to prevent accidental drawing
             mouse_pos[1] < 22.0
         }
         #[cfg(not(target_os = "macos"))]
@@ -436,12 +436,25 @@ impl State {
                     let position = [start[0].min(end[0]), start[1].min(end[1])];
                     let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
 
+                    let mut rough_options = crate::rough::RoughOptions::default();
+                    rough_options.stroke_width = self.stroke_width;
+                    
+                    let mut rng = rand::rng();
+                    
+                    rough_options.roughness = 0.7 + rng.random::<f32>() * 1.0;
+                    rough_options.bowing = 0.3 + rng.random::<f32>() * 1.2;
+                    rough_options.max_randomness_offset = 1.0 + rng.random::<f32>() * 1.5;
+                    rough_options.curve_tightness = rng.random::<f32>() * 0.2;
+                    
+                    rough_options.seed = Some(rng.random::<u64>());
+
                     Some(DrawingElement::Rectangle {
                         position,
                         size,
                         color: self.current_color,
                         fill: false,
                         stroke_width: self.stroke_width,
+                        rough_style: Some(rough_options),
                     })
                 } else {
                     None
@@ -452,12 +465,26 @@ impl State {
                     let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     let radius = ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt();
 
+                    let mut rough_options = crate::rough::RoughOptions::default();
+                    rough_options.stroke_width = self.stroke_width;
+                    
+                    let mut rng = rand::rng();
+                    
+                    rough_options.roughness = 0.4 + rng.random::<f32>() * 0.4;
+                    rough_options.bowing = 0.2 + rng.random::<f32>() * 0.3;
+                    rough_options.max_randomness_offset = 0.5 + rng.random::<f32>() * 0.5;
+                    rough_options.curve_step_count = 32 + (rng.random::<f32>() * 8.0) as u32;
+                    rough_options.curve_tightness = rng.random::<f32>() * 0.1;
+                    
+                    rough_options.seed = Some(rng.random::<u64>());
+
                     Some(DrawingElement::Circle {
                         center: start,
                         radius,
                         color: self.current_color,
                         fill: false,
                         stroke_width: self.stroke_width,
+                        rough_style: Some(rough_options),
                     })
                 } else {
                     None
@@ -467,11 +494,25 @@ impl State {
                 if let Some(start) = self.input.drag_start {
                     let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
 
+                    let mut rough_options = crate::rough::RoughOptions::default();
+                    rough_options.stroke_width = self.stroke_width;
+                    
+                    let mut rng = rand::rng();
+                    
+                    rough_options.roughness = 0.5 + rng.random::<f32>() * 0.6;
+                    rough_options.bowing = 0.3 + rng.random::<f32>() * 0.4;
+                    rough_options.max_randomness_offset = 0.8 + rng.random::<f32>() * 0.7;
+                    rough_options.curve_step_count = 8 + (rng.random::<f32>() * 4.0) as u32;
+                    rough_options.curve_tightness = rng.random::<f32>() * 0.1;
+                    
+                    rough_options.seed = Some(rng.random::<u64>());
+
                     Some(DrawingElement::Arrow {
                         start,
                         end,
                         color: self.current_color,
                         width: self.stroke_width,
+                        rough_style: Some(rough_options),
                     })
                 } else {
                     None
@@ -505,9 +546,10 @@ impl State {
                     self.input.preview_element = Some(DrawingElement::Rectangle {
                         position,
                         size,
-                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5], // Make semi-transparent
+                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5],
                         fill: false,
                         stroke_width: self.stroke_width,
+                        rough_style: None,
                     });
                 }
             }
@@ -519,9 +561,10 @@ impl State {
                     self.input.preview_element = Some(DrawingElement::Circle {
                         center: start,
                         radius,
-                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5], // Make semi-transparent
+                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5],
                         fill: false,
                         stroke_width: self.stroke_width,
+                        rough_style: None,
                     });
                 }
             }
@@ -532,8 +575,9 @@ impl State {
                     self.input.preview_element = Some(DrawingElement::Arrow {
                         start,
                         end,
-                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5], // Make semi-transparent
+                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5],
                         width: self.stroke_width,
+                        rough_style: None,
                     });
                 }
             }
@@ -547,9 +591,9 @@ impl State {
     fn is_element_at_position(&self, element: &DrawingElement, pos: [f32; 2]) -> bool {
         match element {
             DrawingElement::Text { position, content, size, .. } => {
-                let char_width = size * 0.6; // Approximate character width
+                let char_width = size * 0.6;
                 let text_width = content.len() as f32 * char_width;
-                let text_height = size * 1.2; // Text height with some padding
+                let text_height = size * 1.2;
                 
                 pos[0] >= position[0] - 5.0 && pos[0] <= position[0] + text_width + 5.0 &&
                 pos[1] >= position[1] - text_height && pos[1] <= position[1] + 5.0

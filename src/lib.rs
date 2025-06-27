@@ -5,6 +5,7 @@ mod drawing;
 mod event_handler;
 mod math;
 mod renderer;
+mod rough;
 mod state;
 mod text_renderer;
 mod texture;
