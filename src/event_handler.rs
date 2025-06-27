@@ -142,7 +142,7 @@ impl State {
                                             self.input.current_stroke.clear();
                                             self.input.current_stroke.push(canvas_pos);
                                         }
-                                        Tool::Rectangle | Tool::Circle | Tool::Arrow => {
+                                        Tool::Rectangle | Tool::Circle | Tool::Arrow | Tool::Line => {
                                             self.input.drag_start = Some(canvas_pos);
                                         }
                                         Tool::Text => {
@@ -156,6 +156,13 @@ impl State {
                                             self.typing.cursor_visible = true;
                                             self.typing.blink_timer = Instant::now();
                                             return true;
+                                        }
+                                        Tool::Eraser => {
+                                            if let Some(element_index) = self.find_element_at_position(canvas_pos) {
+                                                self.elements.remove(element_index);
+                                                return true;
+                                            }
+                                            return false;
                                         }
                                         _ => {}
                                     }
@@ -356,6 +363,14 @@ impl State {
                             self.current_tool = Tool::Text;
                             true
                         }
+                        winit::keyboard::KeyCode::Digit7 => {
+                            self.current_tool = Tool::Line;
+                            true
+                        }
+                        winit::keyboard::KeyCode::Digit8 => {
+                            self.current_tool = Tool::Eraser;
+                            true
+                        }
                         winit::keyboard::KeyCode::Minus => {
                             if is_ctrl_or_cmd {
                                 self.canvas.transform.scale *= 0.9;
@@ -518,6 +533,34 @@ impl State {
                     None
                 }
             }
+            Tool::Line => {
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+
+                    let mut rough_options = crate::rough::RoughOptions::default();
+                    rough_options.stroke_width = self.stroke_width;
+                    
+                    let mut rng = rand::rng();
+                    
+                    rough_options.roughness = 0.6 + rng.random::<f32>() * 0.8;
+                    rough_options.bowing = 0.4 + rng.random::<f32>() * 0.6;
+                    rough_options.max_randomness_offset = 1.0 + rng.random::<f32>() * 1.0;
+                    rough_options.curve_step_count = 6 + (rng.random::<f32>() * 6.0) as u32;
+                    rough_options.curve_tightness = rng.random::<f32>() * 0.1;
+                    
+                    rough_options.seed = Some(rng.random::<u64>());
+
+                    Some(DrawingElement::Line {
+                        start,
+                        end,
+                        color: self.current_color,
+                        width: self.stroke_width,
+                        rough_style: Some(rough_options),
+                    })
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
 
@@ -581,6 +624,19 @@ impl State {
                     });
                 }
             }
+            Tool::Line => {
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+
+                    self.input.preview_element = Some(DrawingElement::Line {
+                        start,
+                        end,
+                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5],
+                        width: self.stroke_width,
+                        rough_style: None,
+                    });
+                }
+            }
             _ => {
                 self.input.preview_element = None;
             }
@@ -621,6 +677,9 @@ impl State {
                 }
                 false
             }
+            DrawingElement::Line { start, end, width, .. } => {
+                self.point_to_line_distance(pos, *start, *end) <= width * 2.0
+            }
         }
     }
     
@@ -638,6 +697,7 @@ impl State {
                     points[0]
                 }
             }
+            DrawingElement::Line { start, .. } => *start,
         }
     }
     
@@ -678,6 +738,14 @@ impl State {
                         }
                     }
                 }
+                DrawingElement::Line { start, end, .. } => {
+                    let line_dx = end[0] - start[0];
+                    let line_dy = end[1] - start[1];
+                    start[0] = orig_pos[0] + dx;
+                    start[1] = orig_pos[1] + dy;
+                    end[0] = start[0] + line_dx;
+                    end[1] = start[1] + line_dy;
+                }
             }
         }
     }
@@ -700,5 +768,15 @@ impl State {
         ];
         
         ((point[0] - projection[0]).powi(2) + (point[1] - projection[1]).powi(2)).sqrt()
+    }
+
+    fn find_element_at_position(&self, pos: [f32; 2]) -> Option<usize> {
+        // Search in reverse order so we select the topmost (most recently drawn) element
+        for (index, element) in self.elements.iter().enumerate().rev() {
+            if self.is_element_at_position(element, pos) {
+                return Some(index);
+            }
+        }
+        None
     }
 }

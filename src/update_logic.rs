@@ -485,6 +485,73 @@ impl State {
                 }
                 DrawingElement::Text { .. } => {}
                 DrawingElement::TextBox { .. } => {}
+                DrawingElement::Line {
+                    start,
+                    end,
+                    color,
+                    width,
+                    rough_style,
+                } => {
+                    if let Some(rough_options) = rough_style {
+                        let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
+                        let rough_line = generator.rough_line(*start, *end, rough_options);
+                        
+                        let (line_vertices, line_indices) = generator.points_to_vertices(&rough_line, *color, rough_options.stroke_width);
+                        
+                        let offset_indices: Vec<u16> = line_indices.iter().map(|&i| i + index_offset).collect();
+                        
+                        vertices.extend(line_vertices);
+                        indices.extend(offset_indices);
+                        index_offset += rough_line.len().saturating_sub(1) as u16 * 4;
+                        
+                        if !rough_options.disable_multi_stroke {
+                            let rough_line2 = generator.rough_line(*start, *end, rough_options);
+                            let (line_vertices2, line_indices2) = generator.points_to_vertices(&rough_line2, *color, rough_options.stroke_width);
+                            
+                            let offset_indices2: Vec<u16> = line_indices2.iter().map(|&i| i + index_offset).collect();
+                            
+                            vertices.extend(line_vertices2);
+                            indices.extend(offset_indices2);
+                            index_offset += rough_line2.len().saturating_sub(1) as u16 * 4;
+                        }
+                    } else {
+                        let dx = end[0] - start[0];
+                        let dy = end[1] - start[1];
+                        let len = (dx * dx + dy * dy).sqrt();
+
+                        if len > 0.0 {
+                            let nx = -dy / len * width * 0.5;
+                            let ny = dx / len * width * 0.5;
+
+                            vertices.push(Vertex {
+                                position: [start[0] - nx, start[1] - ny],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [start[0] + nx, start[1] + ny],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [end[0] + nx, end[1] + ny],
+                                color: *color,
+                            });
+                            vertices.push(Vertex {
+                                position: [end[0] - nx, end[1] - ny],
+                                color: *color,
+                            });
+
+                            indices.extend_from_slice(&[
+                                index_offset,
+                                index_offset + 1,
+                                index_offset + 2,
+                                index_offset,
+                                index_offset + 2,
+                                index_offset + 3,
+                            ]);
+                            index_offset += 4;
+                        }
+                    }
+                }
             }
         }
 
@@ -655,7 +722,6 @@ impl State {
                     }
                 }
                 _ => {
-                    // TODO: Implement preview for other tools
                 }
             }
         }
@@ -929,6 +995,44 @@ impl State {
                             *index_offset += 4;
                         }
                     }
+                }
+            }
+            crate::drawing::DrawingElement::Line { start, end, .. } => {
+                let dx = end[0] - start[0];
+                let dy = end[1] - start[1];
+                let len = (dx * dx + dy * dy).sqrt();
+                
+                if len > 0.0 {
+                    let expanded_width = highlight_width * 2.0;
+                    let nx = -dy / len * expanded_width * 0.5;
+                    let ny = dx / len * expanded_width * 0.5;
+                    
+                    vertices.push(crate::vertex::Vertex {
+                        position: [start[0] - nx, start[1] - ny],
+                        color: selection_color,
+                    });
+                    vertices.push(crate::vertex::Vertex {
+                        position: [start[0] + nx, start[1] + ny],
+                        color: selection_color,
+                    });
+                    vertices.push(crate::vertex::Vertex {
+                        position: [end[0] + nx, end[1] + ny],
+                        color: selection_color,
+                    });
+                    vertices.push(crate::vertex::Vertex {
+                        position: [end[0] - nx, end[1] - ny],
+                        color: selection_color,
+                    });
+                    
+                    indices.extend_from_slice(&[
+                        *index_offset,
+                        *index_offset + 1,
+                        *index_offset + 2,
+                        *index_offset,
+                        *index_offset + 2,
+                        *index_offset + 3,
+                    ]);
+                    *index_offset += 4;
                 }
             }
             _ => {}

@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tool {
     Pen,
+    Line,
     Rectangle,
     Circle,
     Arrow,
@@ -22,6 +23,13 @@ pub enum DrawingElement {
         points: Vec<[f32; 2]>,
         color: [f32; 4],
         width: f32,
+    },
+    Line {
+        start: [f32; 2],
+        end: [f32; 2],
+        color: [f32; 4],
+        width: f32,
+        rough_style: Option<crate::rough::RoughOptions>,
     },
     Rectangle {
         position: [f32; 2],

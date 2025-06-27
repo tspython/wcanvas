@@ -67,10 +67,16 @@ impl UiRenderer {
                 key_binding: "6",
             },
             ToolIcon {
-                tool: Tool::Eraser,
+                tool: Tool::Line,
                 position: [310.0, 10.0],
                 size: [40.0, 40.0],
                 key_binding: "7",
+            },
+            ToolIcon {
+                tool: Tool::Eraser,
+                position: [360.0, 10.0],
+                size: [40.0, 40.0],
+                key_binding: "8",
             },
         ];
 
@@ -184,6 +190,32 @@ impl UiRenderer {
                 let band_center = [center[0], center[1] - eraser_height * 0.15];
                 self.create_simple_rect(vertices, indices, index_offset,
                     band_center, [eraser_width * 1.1, eraser_height * 0.15], color);
+            },
+            Tool::Line => {
+                let line_size = size * 0.7;
+                let thickness = size * 0.135;
+                
+                let start = [center[0] - line_size * 0.4, center[1] - line_size * 0.2];
+                let end = [center[0] + line_size * 0.4, center[1] + line_size * 0.2];
+                
+                let dx = end[0] - start[0];
+                let dy = end[1] - start[1];
+                let len = (dx * dx + dy * dy).sqrt();
+                let perp_x = -dy / len * thickness * 0.5;
+                let perp_y = dx / len * thickness * 0.5;
+                
+                vertices.extend_from_slice(&[
+                    UiVertex { position: [start[0] + perp_x, start[1] + perp_y], color, uv: [0.0, 0.0] },
+                    UiVertex { position: [start[0] - perp_x, start[1] - perp_y], color, uv: [0.0, 0.0] },
+                    UiVertex { position: [end[0] - perp_x, end[1] - perp_y], color, uv: [0.0, 0.0] },
+                    UiVertex { position: [end[0] + perp_x, end[1] + perp_y], color, uv: [0.0, 0.0] },
+                ]);
+                
+                indices.extend_from_slice(&[
+                    *index_offset, *index_offset + 1, *index_offset + 2,
+                    *index_offset, *index_offset + 2, *index_offset + 3,
+                ]);
+                *index_offset += 4;
             },
         }
     }
@@ -875,6 +907,7 @@ impl UiRenderer {
                 Tool::Arrow => "→",
                 Tool::Text => "T",
                 Tool::Eraser => "⌫",
+                Tool::Line => "|",
             };
             
             let text_pos = [x - 8.0, y + 6.0];
