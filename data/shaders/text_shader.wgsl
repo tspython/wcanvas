@@ -29,8 +29,29 @@ fn vs_main(v: VSIn) -> VSOut {
     return o;
 }
 
+fn median(r: f32, g: f32, b: f32) -> f32 {
+    return max(min(r, g), min(max(r, g), b));
+}
+
+fn smooth_step(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
 @fragment
 fn fs_main(inp: VSOut) -> @location(0) vec4<f32> {
-    let a = textureSample(tex, samp, inp.uv).r;
-    return vec4<f32>(inp.col.rgb, inp.col.a * a);
+    let msdf_sample = textureSample(tex, samp, inp.uv);
+    
+    let distance = median(msdf_sample.r, msdf_sample.g, msdf_sample.b);
+    
+    let signed_distance = (distance - 0.5) * 12.0; 
+    
+    let unit_range = 6.0; 
+    let screen_px_range = unit_range * length(fwidth(inp.uv)) * 64.0; 
+    let screen_px_distance = signed_distance / max(screen_px_range, 0.001);
+    
+    let smoothness = 0.7; 
+    let alpha = smooth_step(-smoothness, smoothness, screen_px_distance);
+    
+    return vec4<f32>(inp.col.rgb, inp.col.a * alpha);
 }
