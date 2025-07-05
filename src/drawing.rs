@@ -4,6 +4,7 @@ pub enum Tool {
     Line,
     Rectangle,
     Circle,
+    Diamond,
     Arrow,
     Text,
     Eraser,
@@ -42,6 +43,14 @@ pub enum DrawingElement {
     Circle {
         center: [f32; 2],
         radius: f32,
+        color: [f32; 4],
+        fill: bool,
+        stroke_width: f32,
+        rough_style: Option<crate::rough::RoughOptions>,
+    },
+    Diamond {
+        position: [f32; 2],
+        size: [f32; 2],
         color: [f32; 4],
         fill: bool,
         stroke_width: f32,
