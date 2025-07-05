@@ -1,0 +1,14 @@
+- Fills
+    - have a menu to preset fill and give options for the roughness of the fill (only for shapes i.e. rectangles and circles)
+    - polygon fills
+        - user should be able to fill areas created by shapes/lines with certain fill
+            - need to research into GPU based filling
+            - polygons
+                - cpu based triangulation
+                - use gpu to fill those triangles
+            - circles (?)
+- Color Choice
+    - We currently have preset colors, I want to have the user be able to use those preset colors as a base and custom configure them either using a color wheel or a color picker.
+
+- Toolbar
+    - Diamond Shape

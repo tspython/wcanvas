@@ -81,23 +81,23 @@ impl State {
                                 }
 
                                 if let Some(tool) = self.ui_renderer.handle_click(
-                                    self.input.mouse_pos, 
-                                    (self.size.width as f32, self.size.height as f32)
+                                    self.input.mouse_pos,
+                                    (self.size.width as f32, self.size.height as f32),
                                 ) {
                                     self.current_tool = tool;
                                     return true;
                                 }
-                                
-                                if let Some(color) = self.ui_renderer.handle_color_click(
-                                    self.input.mouse_pos
-                                ) {
+
+                                if let Some(color) =
+                                    self.ui_renderer.handle_color_click(self.input.mouse_pos)
+                                {
                                     self.current_color = color;
                                     return true;
                                 }
-                                
+
                                 if self.ui_renderer.is_mouse_over_ui(
-                                    self.input.mouse_pos, 
-                                    (self.size.width as f32, self.size.height as f32)
+                                    self.input.mouse_pos,
+                                    (self.size.width as f32, self.size.height as f32),
                                 ) {
                                     return true;
                                 }
@@ -120,13 +120,13 @@ impl State {
                                     match self.current_tool {
                                         Tool::Select => {
                                             for (i, element) in self.elements.iter().enumerate() {
-                                                if self.is_element_at_position(element, canvas_pos) {
-                                                    #[cfg(debug_assertions)]
-                                                    println!("Selected element {} at position {:?}", i, canvas_pos);
+                                                if self.is_element_at_position(element, canvas_pos)
+                                                {
                                                     self.input.state = Dragging;
                                                     self.input.selected_element = Some(i);
                                                     self.input.drag_start = Some(canvas_pos);
-                                                    self.input.element_start_pos = Some(self.get_element_position(element));
+                                                    self.input.element_start_pos =
+                                                        Some(self.get_element_position(element));
                                                     return true;
                                                 }
                                             }
@@ -142,7 +142,11 @@ impl State {
                                             self.input.current_stroke.clear();
                                             self.input.current_stroke.push(canvas_pos);
                                         }
-                                        Tool::Rectangle | Tool::Circle | Tool::Arrow | Tool::Line => {
+                                        Tool::Rectangle
+                                        | Tool::Circle
+                                        | Tool::Diamond
+                                        | Tool::Arrow
+                                        | Tool::Line => {
                                             self.input.drag_start = Some(canvas_pos);
                                         }
                                         Tool::Text => {
@@ -158,7 +162,9 @@ impl State {
                                             return true;
                                         }
                                         Tool::Eraser => {
-                                            if let Some(element_index) = self.find_element_at_position(canvas_pos) {
+                                            if let Some(element_index) =
+                                                self.find_element_at_position(canvas_pos)
+                                            {
                                                 self.elements.remove(element_index);
                                                 return true;
                                             }
@@ -227,22 +233,26 @@ impl State {
                     }
                 } else if self.input.state == Drawing && self.current_tool == Tool::Pen {
                     if self.ui_renderer.is_mouse_over_ui(
-                        self.input.mouse_pos, 
-                        (self.size.width as f32, self.size.height as f32)
-                    ) || self.is_mouse_in_titlebar(self.input.mouse_pos) {
+                        self.input.mouse_pos,
+                        (self.size.width as f32, self.size.height as f32),
+                    ) || self.is_mouse_in_titlebar(self.input.mouse_pos)
+                    {
                         self.finish_drawing();
                         self.input.state = crate::state::UserInputState::Idle;
                         return true;
                     }
-                    
+
                     let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     self.input.current_stroke.push(canvas_pos);
                 } else if self.input.state == Drawing {
                     self.update_preview_element();
                 } else if self.input.state == Dragging {
                     let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-                    if let (Some(idx), Some(start_mouse), Some(orig_pos)) =
-                        (self.input.selected_element, self.input.drag_start, self.input.element_start_pos) {
+                    if let (Some(idx), Some(start_mouse), Some(orig_pos)) = (
+                        self.input.selected_element,
+                        self.input.drag_start,
+                        self.input.element_start_pos,
+                    ) {
                         let dx = canvas_pos[0] - start_mouse[0];
                         let dy = canvas_pos[1] - start_mouse[1];
                         self.move_element(idx, orig_pos, dx, dy);
@@ -453,14 +463,14 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
-                    
+
                     let mut rng = rand::rng();
-                    
+
                     rough_options.roughness = 0.7 + rng.random::<f32>() * 1.0;
                     rough_options.bowing = 0.3 + rng.random::<f32>() * 1.2;
                     rough_options.max_randomness_offset = 1.0 + rng.random::<f32>() * 1.5;
                     rough_options.curve_tightness = rng.random::<f32>() * 0.2;
-                    
+
                     rough_options.seed = Some(rng.random::<u64>());
 
                     Some(DrawingElement::Rectangle {
@@ -482,15 +492,15 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
-                    
+
                     let mut rng = rand::rng();
-                    
+
                     rough_options.roughness = 0.4 + rng.random::<f32>() * 0.4;
                     rough_options.bowing = 0.2 + rng.random::<f32>() * 0.3;
                     rough_options.max_randomness_offset = 0.5 + rng.random::<f32>() * 0.5;
                     rough_options.curve_step_count = 32 + (rng.random::<f32>() * 8.0) as u32;
                     rough_options.curve_tightness = rng.random::<f32>() * 0.1;
-                    
+
                     rough_options.seed = Some(rng.random::<u64>());
 
                     Some(DrawingElement::Circle {
@@ -511,15 +521,15 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
-                    
+
                     let mut rng = rand::rng();
-                    
+
                     rough_options.roughness = 0.5 + rng.random::<f32>() * 0.6;
                     rough_options.bowing = 0.3 + rng.random::<f32>() * 0.4;
                     rough_options.max_randomness_offset = 0.8 + rng.random::<f32>() * 0.7;
                     rough_options.curve_step_count = 8 + (rng.random::<f32>() * 4.0) as u32;
                     rough_options.curve_tightness = rng.random::<f32>() * 0.1;
-                    
+
                     rough_options.seed = Some(rng.random::<u64>());
 
                     Some(DrawingElement::Arrow {
@@ -539,15 +549,15 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
-                    
+
                     let mut rng = rand::rng();
-                    
+
                     rough_options.roughness = 0.6 + rng.random::<f32>() * 0.8;
                     rough_options.bowing = 0.4 + rng.random::<f32>() * 0.6;
                     rough_options.max_randomness_offset = 1.0 + rng.random::<f32>() * 1.0;
                     rough_options.curve_step_count = 6 + (rng.random::<f32>() * 6.0) as u32;
                     rough_options.curve_tightness = rng.random::<f32>() * 0.1;
-                    
+
                     rough_options.seed = Some(rng.random::<u64>());
 
                     Some(DrawingElement::Line {
@@ -555,6 +565,36 @@ impl State {
                         end,
                         color: self.current_color,
                         width: self.stroke_width,
+                        rough_style: Some(rough_options),
+                    })
+                } else {
+                    None
+                }
+            }
+            Tool::Diamond => {
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                    let position = [start[0].min(end[0]), start[1].min(end[1])];
+                    let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
+
+                    let mut rough_options = crate::rough::RoughOptions::default();
+                    rough_options.stroke_width = self.stroke_width;
+
+                    let mut rng = rand::rng();
+
+                    rough_options.roughness = 0.6 + rng.random::<f32>() * 0.8;
+                    rough_options.bowing = 0.4 + rng.random::<f32>() * 0.6;
+                    rough_options.max_randomness_offset = 1.0 + rng.random::<f32>() * 1.0;
+                    rough_options.curve_tightness = rng.random::<f32>() * 0.2;
+
+                    rough_options.seed = Some(rng.random::<u64>());
+
+                    Some(DrawingElement::Diamond {
+                        position,
+                        size,
+                        color: self.current_color,
+                        fill: false,
+                        stroke_width: self.stroke_width,
                         rough_style: Some(rough_options),
                     })
                 } else {
@@ -589,7 +629,12 @@ impl State {
                     self.input.preview_element = Some(DrawingElement::Rectangle {
                         position,
                         size,
-                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5],
+                        color: [
+                            self.current_color[0],
+                            self.current_color[1],
+                            self.current_color[2],
+                            0.5,
+                        ],
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: None,
@@ -604,7 +649,12 @@ impl State {
                     self.input.preview_element = Some(DrawingElement::Circle {
                         center: start,
                         radius,
-                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5],
+                        color: [
+                            self.current_color[0],
+                            self.current_color[1],
+                            self.current_color[2],
+                            0.5,
+                        ],
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: None,
@@ -618,7 +668,12 @@ impl State {
                     self.input.preview_element = Some(DrawingElement::Arrow {
                         start,
                         end,
-                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5],
+                        color: [
+                            self.current_color[0],
+                            self.current_color[1],
+                            self.current_color[2],
+                            0.5,
+                        ],
                         width: self.stroke_width,
                         rough_style: None,
                     });
@@ -631,8 +686,34 @@ impl State {
                     self.input.preview_element = Some(DrawingElement::Line {
                         start,
                         end,
-                        color: [self.current_color[0], self.current_color[1], self.current_color[2], 0.5],
+                        color: [
+                            self.current_color[0],
+                            self.current_color[1],
+                            self.current_color[2],
+                            0.5,
+                        ],
                         width: self.stroke_width,
+                        rough_style: None,
+                    });
+                }
+            }
+            Tool::Diamond => {
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                    let position = [start[0].min(end[0]), start[1].min(end[1])];
+                    let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
+
+                    self.input.preview_element = Some(DrawingElement::Diamond {
+                        position,
+                        size,
+                        color: [
+                            self.current_color[0],
+                            self.current_color[1],
+                            self.current_color[2],
+                            0.5,
+                        ],
+                        fill: false,
+                        stroke_width: self.stroke_width,
                         rough_style: None,
                     });
                 }
@@ -646,29 +727,60 @@ impl State {
     // Helper methods for element selection and manipulation
     fn is_element_at_position(&self, element: &DrawingElement, pos: [f32; 2]) -> bool {
         match element {
-            DrawingElement::Text { position, content, size, .. } => {
+            DrawingElement::Text {
+                position,
+                content,
+                size,
+                ..
+            } => {
                 let char_width = size * 0.6;
                 let text_width = content.len() as f32 * char_width;
                 let text_height = size * 1.2;
-                
-                pos[0] >= position[0] - 5.0 && pos[0] <= position[0] + text_width + 5.0 &&
-                pos[1] >= position[1] - text_height && pos[1] <= position[1] + 5.0
+
+                pos[0] >= position[0] - 5.0
+                    && pos[0] <= position[0] + text_width + 5.0
+                    && pos[1] >= position[1] - text_height
+                    && pos[1] <= position[1] + 5.0
             }
-            DrawingElement::TextBox { pos: element_pos, size, .. } => {
-                pos[0] >= element_pos[0] && pos[0] <= element_pos[0] + size[0] &&
-                pos[1] >= element_pos[1] && pos[1] <= element_pos[1] + size[1]
+            DrawingElement::TextBox {
+                pos: element_pos,
+                size,
+                ..
+            } => {
+                pos[0] >= element_pos[0]
+                    && pos[0] <= element_pos[0] + size[0]
+                    && pos[1] >= element_pos[1]
+                    && pos[1] <= element_pos[1] + size[1]
             }
             DrawingElement::Rectangle { position, size, .. } => {
-                pos[0] >= position[0] && pos[0] <= position[0] + size[0] &&
-                pos[1] >= position[1] && pos[1] <= position[1] + size[1]
+                pos[0] >= position[0]
+                    && pos[0] <= position[0] + size[0]
+                    && pos[1] >= position[1]
+                    && pos[1] <= position[1] + size[1]
             }
             DrawingElement::Circle { center, radius, .. } => {
                 let distance = ((pos[0] - center[0]).powi(2) + (pos[1] - center[1]).powi(2)).sqrt();
                 distance <= *radius
             }
-            DrawingElement::Arrow { start, end, width, .. } => {
-                self.point_to_line_distance(pos, *start, *end) <= width * 2.0
+            DrawingElement::Diamond {
+                position,
+                size,
+                color,
+                fill,
+                stroke_width,
+                rough_style,
+            } => {
+                let half_width = size[0] / 2.0;
+                let half_height = size[1] / 2.0;
+                let x = pos[0] - position[0];
+                let y = pos[1] - position[1];
+                let distance =
+                    (half_width * y + half_height * x).abs() / (half_width + half_height);
+                distance <= half_width
             }
+            DrawingElement::Arrow {
+                start, end, width, ..
+            } => self.point_to_line_distance(pos, *start, *end) <= width * 2.0,
             DrawingElement::Stroke { points, width, .. } => {
                 for i in 0..points.len().saturating_sub(1) {
                     if self.point_to_line_distance(pos, points[i], points[i + 1]) <= width * 2.0 {
@@ -677,18 +789,19 @@ impl State {
                 }
                 false
             }
-            DrawingElement::Line { start, end, width, .. } => {
-                self.point_to_line_distance(pos, *start, *end) <= width * 2.0
-            }
+            DrawingElement::Line {
+                start, end, width, ..
+            } => self.point_to_line_distance(pos, *start, *end) <= width * 2.0,
         }
     }
-    
+
     fn get_element_position(&self, element: &DrawingElement) -> [f32; 2] {
         match element {
             DrawingElement::Text { position, .. } => *position,
             DrawingElement::TextBox { pos, .. } => *pos,
             DrawingElement::Rectangle { position, .. } => *position,
             DrawingElement::Circle { center, .. } => *center,
+            DrawingElement::Diamond { position, .. } => *position,
             DrawingElement::Arrow { start, .. } => *start,
             DrawingElement::Stroke { points, .. } => {
                 if points.is_empty() {
@@ -700,7 +813,7 @@ impl State {
             DrawingElement::Line { start, .. } => *start,
         }
     }
-    
+
     fn move_element(&mut self, idx: usize, orig_pos: [f32; 2], dx: f32, dy: f32) {
         if let Some(element) = self.elements.get_mut(idx) {
             match element {
@@ -719,6 +832,10 @@ impl State {
                 DrawingElement::Circle { center, .. } => {
                     center[0] = orig_pos[0] + dx;
                     center[1] = orig_pos[1] + dy;
+                }
+                DrawingElement::Diamond { position, .. } => {
+                    position[0] = orig_pos[0] + dx;
+                    position[1] = orig_pos[1] + dy;
                 }
                 DrawingElement::Arrow { start, end, .. } => {
                     let arrow_dx = end[0] - start[0];
@@ -749,24 +866,32 @@ impl State {
             }
         }
     }
-    
-    fn point_to_line_distance(&self, point: [f32; 2], line_start: [f32; 2], line_end: [f32; 2]) -> f32 {
-        let line_length_squared = (line_end[0] - line_start[0]).powi(2) + (line_end[1] - line_start[1]).powi(2);
-        
+
+    fn point_to_line_distance(
+        &self,
+        point: [f32; 2],
+        line_start: [f32; 2],
+        line_end: [f32; 2],
+    ) -> f32 {
+        let line_length_squared =
+            (line_end[0] - line_start[0]).powi(2) + (line_end[1] - line_start[1]).powi(2);
+
         if line_length_squared == 0.0 {
-            return ((point[0] - line_start[0]).powi(2) + (point[1] - line_start[1]).powi(2)).sqrt();
+            return ((point[0] - line_start[0]).powi(2) + (point[1] - line_start[1]).powi(2))
+                .sqrt();
         }
-        
-        let t = ((point[0] - line_start[0]) * (line_end[0] - line_start[0]) + 
-                 (point[1] - line_start[1]) * (line_end[1] - line_start[1])) / line_length_squared;
-        
+
+        let t = ((point[0] - line_start[0]) * (line_end[0] - line_start[0])
+            + (point[1] - line_start[1]) * (line_end[1] - line_start[1]))
+            / line_length_squared;
+
         let t = t.clamp(0.0, 1.0);
-        
+
         let projection = [
             line_start[0] + t * (line_end[0] - line_start[0]),
-            line_start[1] + t * (line_end[1] - line_start[1])
+            line_start[1] + t * (line_end[1] - line_start[1]),
         ];
-        
+
         ((point[0] - projection[0]).powi(2) + (point[1] - projection[1]).powi(2)).sqrt()
     }
 

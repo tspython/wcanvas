@@ -24,7 +24,7 @@ impl State {
             self.current_tool,
             self.current_color,
             (self.size.width as f32, self.size.height as f32),
-            self.canvas.transform.scale
+            self.canvas.transform.scale,
         );
 
         if !ui_vertices.is_empty() {
@@ -48,11 +48,11 @@ impl State {
         }
 
         let mut drawing_elements = self.elements.clone();
-        
+
         if let Some(preview) = &self.input.preview_element {
             drawing_elements.push(preview.clone());
         }
-        
+
         if self.typing.active {
             let mut display_text = self.typing.buffer.clone();
             if self.typing.cursor_visible {
@@ -65,7 +65,7 @@ impl State {
                 size: 32.0,
             });
         }
-        
+
         self.text_renderer.prepare(
             &self.gpu.device,
             &self.gpu.queue,
@@ -85,7 +85,7 @@ impl State {
             14.0,
             [1.0, 1.0, 1.0, 1.0],
         );
-        
+
         self.text_renderer.build_screen_buffers(&self.gpu.device);
     }
 
@@ -156,13 +156,19 @@ impl State {
                 } => {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
-                        let rough_lines = generator.rough_rectangle(*position, *size, rough_options);
-                        
+                        let rough_lines =
+                            generator.rough_rectangle(*position, *size, rough_options);
+
                         for line_points in rough_lines {
-                            let (line_vertices, line_indices) = generator.points_to_vertices(&line_points, *color, rough_options.stroke_width);
-                            
-                            let offset_indices: Vec<u16> = line_indices.iter().map(|&i| i + index_offset).collect();
-                            
+                            let (line_vertices, line_indices) = generator.points_to_vertices(
+                                &line_points,
+                                *color,
+                                rough_options.stroke_width,
+                            );
+
+                            let offset_indices: Vec<u16> =
+                                line_indices.iter().map(|&i| i + index_offset).collect();
+
                             vertices.extend(line_vertices);
                             indices.extend(offset_indices);
                             index_offset += line_points.len().saturating_sub(1) as u16 * 4;
@@ -256,13 +262,19 @@ impl State {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                         let diameter = *radius * 2.0;
-                        let rough_lines = generator.rough_ellipse(*center, diameter, diameter, rough_options);
-                        
+                        let rough_lines =
+                            generator.rough_ellipse(*center, diameter, diameter, rough_options);
+
                         for line_points in rough_lines {
-                            let (line_vertices, line_indices) = generator.points_to_vertices(&line_points, *color, rough_options.stroke_width);
-                            
-                            let offset_indices: Vec<u16> = line_indices.iter().map(|&i| i + index_offset).collect();
-                            
+                            let (line_vertices, line_indices) = generator.points_to_vertices(
+                                &line_points,
+                                *color,
+                                rough_options.stroke_width,
+                            );
+
+                            let offset_indices: Vec<u16> =
+                                line_indices.iter().map(|&i| i + index_offset).collect();
+
                             vertices.extend(line_vertices);
                             indices.extend(offset_indices);
                             index_offset += line_points.len().saturating_sub(1) as u16 * 4;
@@ -279,7 +291,8 @@ impl State {
                             index_offset += 1;
 
                             for i in 0..SEGMENTS {
-                                let angle = (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
+                                let angle =
+                                    (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
                                 vertices.push(Vertex {
                                     position: [
                                         center[0] + angle.cos() * radius,
@@ -299,7 +312,8 @@ impl State {
                             index_offset += SEGMENTS as u16;
                         } else {
                             for i in 0..SEGMENTS {
-                                let angle1 = (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
+                                let angle1 =
+                                    (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
                                 let angle2 =
                                     ((i + 1) as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
 
@@ -350,6 +364,111 @@ impl State {
                         }
                     }
                 }
+                DrawingElement::Diamond {
+                    position,
+                    size,
+                    color,
+                    fill,
+                    stroke_width,
+                    rough_style,
+                } => {
+                    if let Some(rough_options) = rough_style {
+                        let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
+                        let rough_lines = generator.rough_diamond(*position, *size, rough_options);
+
+                        for line_points in rough_lines {
+                            let (line_vertices, line_indicies) = generator.points_to_vertices(
+                                &line_points,
+                                *color,
+                                rough_options.stroke_width,
+                            );
+
+                            let offset_indicies: Vec<u16> =
+                                line_indicies.iter().map(|&i| i + index_offset).collect();
+
+                            vertices.extend(line_vertices);
+                            indices.extend(offset_indicies);
+                            index_offset += line_points.len().saturating_sub(1) as u16 * 4;
+                        }
+                    } else {
+                        let center_x = position[0] + size[0] / 2.0;
+                        let center_y = position[1] + size[1] / 2.0;
+                        let half_width = size[0] / 2.0;
+                        let half_height = size[1] / 2.0;
+
+                        let diamond_points = [
+                            [center_x, center_y - half_height],
+                            [center_x + half_width, center_y],
+                            [center_x, center_y + half_height],
+                            [center_x - half_width, center_y],
+                        ];
+
+                        if *fill {
+                            let center_index = index_offset;
+                            vertices.push(Vertex {
+                                position: [center_x, center_y],
+                                color: *color,
+                            });
+                            index_offset += 1;
+
+                            for point in diamond_points.iter() {
+                                vertices.push(Vertex {
+                                    position: *point,
+                                    color: *color,
+                                });
+                            }
+
+                            for i in 0..4 {
+                                indices.extend_from_slice(&[
+                                    center_index,
+                                    center_index + 1 + i as u16,
+                                    center_index + 1 + ((i + 1) % 4) as u16,
+                                ]);
+                            }
+                            index_offset += 4;
+                        } else {
+                            for i in 0..4 {
+                                let p1 = diamond_points[i];
+                                let p2 = diamond_points[(i + 1) % 4];
+
+                                let dx = p2[0] - p1[0];
+                                let dy = p2[1] - p1[1];
+                                let len = (dx * dx + dy * dy).sqrt();
+                                if len > 0.0 {
+                                    let nx = -dy / len * stroke_width * 0.5;
+                                    let ny = dx / len * stroke_width * 0.5;
+
+                                    vertices.push(Vertex {
+                                        position: [p1[0] - nx, p1[1] - ny],
+                                        color: *color,
+                                    });
+                                    vertices.push(Vertex {
+                                        position: [p1[0] + nx, p1[1] + ny],
+                                        color: *color,
+                                    });
+                                    vertices.push(Vertex {
+                                        position: [p2[0] + nx, p2[1] + ny],
+                                        color: *color,
+                                    });
+                                    vertices.push(Vertex {
+                                        position: [p2[0] - nx, p2[1] - ny],
+                                        color: *color,
+                                    });
+
+                                    indices.extend_from_slice(&[
+                                        index_offset,
+                                        index_offset + 1,
+                                        index_offset + 2,
+                                        index_offset,
+                                        index_offset + 2,
+                                        index_offset + 3,
+                                    ]);
+                                    index_offset += 4;
+                                }
+                            }
+                        }
+                    }
+                }
                 DrawingElement::Arrow {
                     start,
                     end,
@@ -360,12 +479,17 @@ impl State {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                         let rough_lines = generator.rough_arrow(*start, *end, rough_options);
-                        
+
                         for line_points in rough_lines {
-                            let (line_vertices, line_indices) = generator.points_to_vertices(&line_points, *color, rough_options.stroke_width);
-                            
-                            let offset_indices: Vec<u16> = line_indices.iter().map(|&i| i + index_offset).collect();
-                            
+                            let (line_vertices, line_indices) = generator.points_to_vertices(
+                                &line_points,
+                                *color,
+                                rough_options.stroke_width,
+                            );
+
+                            let offset_indices: Vec<u16> =
+                                line_indices.iter().map(|&i| i + index_offset).collect();
+
                             vertices.extend(line_vertices);
                             indices.extend(offset_indices);
                             index_offset += line_points.len().saturating_sub(1) as u16 * 4;
@@ -407,7 +531,7 @@ impl State {
                             index_offset += 4;
 
                             let head_len = 20.0;
-                            let head_angle = 0.5; 
+                            let head_angle = 0.5;
 
                             let dir_x = dx / len;
                             let dir_y = dy / len;
@@ -415,11 +539,15 @@ impl State {
                             let cos_angle = (head_angle as f32).cos();
                             let sin_angle = (head_angle as f32).sin();
 
-                            let left_x = end[0] - head_len * (dir_x * cos_angle - dir_y * sin_angle);
-                            let left_y = end[1] - head_len * (dir_y * cos_angle + dir_x * sin_angle);
+                            let left_x =
+                                end[0] - head_len * (dir_x * cos_angle - dir_y * sin_angle);
+                            let left_y =
+                                end[1] - head_len * (dir_y * cos_angle + dir_x * sin_angle);
 
-                            let right_x = end[0] - head_len * (dir_x * cos_angle + dir_y * sin_angle);
-                            let right_y = end[1] - head_len * (dir_y * cos_angle - dir_x * sin_angle);
+                            let right_x =
+                                end[0] - head_len * (dir_x * cos_angle + dir_y * sin_angle);
+                            let right_y =
+                                end[1] - head_len * (dir_y * cos_angle - dir_x * sin_angle);
 
                             let nx1 = -(left_y - end[1]) / head_len * width * 0.5;
                             let ny1 = (left_x - end[0]) / head_len * width * 0.5;
@@ -495,21 +623,31 @@ impl State {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                         let rough_line = generator.rough_line(*start, *end, rough_options);
-                        
-                        let (line_vertices, line_indices) = generator.points_to_vertices(&rough_line, *color, rough_options.stroke_width);
-                        
-                        let offset_indices: Vec<u16> = line_indices.iter().map(|&i| i + index_offset).collect();
-                        
+
+                        let (line_vertices, line_indices) = generator.points_to_vertices(
+                            &rough_line,
+                            *color,
+                            rough_options.stroke_width,
+                        );
+
+                        let offset_indices: Vec<u16> =
+                            line_indices.iter().map(|&i| i + index_offset).collect();
+
                         vertices.extend(line_vertices);
                         indices.extend(offset_indices);
                         index_offset += rough_line.len().saturating_sub(1) as u16 * 4;
-                        
+
                         if !rough_options.disable_multi_stroke {
                             let rough_line2 = generator.rough_line(*start, *end, rough_options);
-                            let (line_vertices2, line_indices2) = generator.points_to_vertices(&rough_line2, *color, rough_options.stroke_width);
-                            
-                            let offset_indices2: Vec<u16> = line_indices2.iter().map(|&i| i + index_offset).collect();
-                            
+                            let (line_vertices2, line_indices2) = generator.points_to_vertices(
+                                &rough_line2,
+                                *color,
+                                rough_options.stroke_width,
+                            );
+
+                            let offset_indices2: Vec<u16> =
+                                line_indices2.iter().map(|&i| i + index_offset).collect();
+
                             vertices.extend(line_vertices2);
                             indices.extend(offset_indices2);
                             index_offset += rough_line2.len().saturating_sub(1) as u16 * 4;
@@ -557,7 +695,12 @@ impl State {
 
         if let Some(selected_idx) = self.input.selected_element {
             if let Some(element) = self.elements.get(selected_idx) {
-                self.add_selection_highlight(element, &mut vertices, &mut indices, &mut index_offset);
+                self.add_selection_highlight(
+                    element,
+                    &mut vertices,
+                    &mut indices,
+                    &mut index_offset,
+                );
             }
         }
 
@@ -653,11 +796,15 @@ impl State {
                             let cos_angle = head_angle.cos();
                             let sin_angle = head_angle.sin();
 
-                            let left_x = end[0] - head_len * (dir_x * cos_angle - dir_y * sin_angle);
-                            let left_y = end[1] - head_len * (dir_y * cos_angle + dir_x * sin_angle);
+                            let left_x =
+                                end[0] - head_len * (dir_x * cos_angle - dir_y * sin_angle);
+                            let left_y =
+                                end[1] - head_len * (dir_y * cos_angle + dir_x * sin_angle);
 
-                            let right_x = end[0] - head_len * (dir_x * cos_angle + dir_y * sin_angle);
-                            let right_y = end[1] - head_len * (dir_y * cos_angle - dir_x * sin_angle);
+                            let right_x =
+                                end[0] - head_len * (dir_x * cos_angle + dir_y * sin_angle);
+                            let right_y =
+                                end[1] - head_len * (dir_y * cos_angle - dir_x * sin_angle);
 
                             let nx1 = -(left_y - end[1]) / head_len * self.stroke_width * 0.5;
                             let ny1 = (left_x - end[0]) / head_len * self.stroke_width * 0.5;
@@ -721,8 +868,7 @@ impl State {
                         }
                     }
                 }
-                _ => {
-                }
+                _ => {}
             }
         }
 
@@ -750,20 +896,26 @@ impl State {
             self.geometry.count = 0;
         }
     }
-    
-    fn add_selection_highlight(&self, element: &crate::drawing::DrawingElement, vertices: &mut Vec<crate::vertex::Vertex>, indices: &mut Vec<u16>, index_offset: &mut u16) {
-        let selection_color = [0.0, 0.5, 1.0, 0.8]; 
+
+    fn add_selection_highlight(
+        &self,
+        element: &crate::drawing::DrawingElement,
+        vertices: &mut Vec<crate::vertex::Vertex>,
+        indices: &mut Vec<u16>,
+        index_offset: &mut u16,
+    ) {
+        let selection_color = [0.0, 0.5, 1.0, 0.8];
         let highlight_width = 3.0;
-        
+
         match element {
             crate::drawing::DrawingElement::Text { position, .. } => {
                 let radius = 30.0;
                 const SEGMENTS: u32 = 16;
-                
+
                 for i in 0..SEGMENTS {
                     let angle1 = (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
                     let angle2 = ((i + 1) as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
-                    
+
                     let p1 = [
                         position[0] + angle1.cos() * radius,
                         position[1] + angle1.sin() * radius,
@@ -772,14 +924,14 @@ impl State {
                         position[0] + angle2.cos() * radius,
                         position[1] + angle2.sin() * radius,
                     ];
-                    
+
                     let dx = p2[0] - p1[0];
                     let dy = p2[1] - p1[1];
                     let len = (dx * dx + dy * dy).sqrt();
                     if len > 0.0 {
                         let nx = -dy / len * highlight_width * 0.5;
                         let ny = dx / len * highlight_width * 0.5;
-                        
+
                         vertices.push(crate::vertex::Vertex {
                             position: [p1[0] - nx, p1[1] - ny],
                             color: selection_color,
@@ -796,7 +948,7 @@ impl State {
                             position: [p2[0] - nx, p2[1] - ny],
                             color: selection_color,
                         });
-                        
+
                         indices.extend_from_slice(&[
                             *index_offset,
                             *index_offset + 1,
@@ -813,25 +965,28 @@ impl State {
                 let margin = 5.0;
                 let expanded_pos = [position[0] - margin, position[1] - margin];
                 let expanded_size = [size[0] + margin * 2.0, size[1] + margin * 2.0];
-                
+
                 let corners = [
                     expanded_pos,
                     [expanded_pos[0] + expanded_size[0], expanded_pos[1]],
-                    [expanded_pos[0] + expanded_size[0], expanded_pos[1] + expanded_size[1]],
+                    [
+                        expanded_pos[0] + expanded_size[0],
+                        expanded_pos[1] + expanded_size[1],
+                    ],
                     [expanded_pos[0], expanded_pos[1] + expanded_size[1]],
                 ];
-                
+
                 for i in 0..4 {
                     let p1 = corners[i];
                     let p2 = corners[(i + 1) % 4];
-                    
+
                     let dx = p2[0] - p1[0];
                     let dy = p2[1] - p1[1];
                     let len = (dx * dx + dy * dy).sqrt();
                     if len > 0.0 {
                         let nx = -dy / len * highlight_width * 0.5;
                         let ny = dx / len * highlight_width * 0.5;
-                        
+
                         vertices.push(crate::vertex::Vertex {
                             position: [p1[0] - nx, p1[1] - ny],
                             color: selection_color,
@@ -848,7 +1003,7 @@ impl State {
                             position: [p2[0] - nx, p2[1] - ny],
                             color: selection_color,
                         });
-                        
+
                         indices.extend_from_slice(&[
                             *index_offset,
                             *index_offset + 1,
@@ -862,14 +1017,13 @@ impl State {
                 }
             }
             crate::drawing::DrawingElement::Circle { center, radius, .. } => {
-                // Draw selection circle around the original circle
                 let expanded_radius = radius + 10.0;
                 const SEGMENTS: u32 = 32;
-                
+
                 for i in 0..SEGMENTS {
                     let angle1 = (i as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
                     let angle2 = ((i + 1) as f32 * 2.0 * std::f32::consts::PI) / SEGMENTS as f32;
-                    
+
                     let p1 = [
                         center[0] + angle1.cos() * expanded_radius,
                         center[1] + angle1.sin() * expanded_radius,
@@ -878,14 +1032,14 @@ impl State {
                         center[0] + angle2.cos() * expanded_radius,
                         center[1] + angle2.sin() * expanded_radius,
                     ];
-                    
+
                     let dx = p2[0] - p1[0];
                     let dy = p2[1] - p1[1];
                     let len = (dx * dx + dy * dy).sqrt();
                     if len > 0.0 {
                         let nx = -dy / len * highlight_width * 0.5;
                         let ny = dx / len * highlight_width * 0.5;
-                        
+
                         vertices.push(crate::vertex::Vertex {
                             position: [p1[0] - nx, p1[1] - ny],
                             color: selection_color,
@@ -902,7 +1056,7 @@ impl State {
                             position: [p2[0] - nx, p2[1] - ny],
                             color: selection_color,
                         });
-                        
+
                         indices.extend_from_slice(&[
                             *index_offset,
                             *index_offset + 1,
@@ -919,12 +1073,12 @@ impl State {
                 let dx = end[0] - start[0];
                 let dy = end[1] - start[1];
                 let len = (dx * dx + dy * dy).sqrt();
-                
+
                 if len > 0.0 {
                     let expanded_width = highlight_width * 2.0;
                     let nx = -dy / len * expanded_width * 0.5;
                     let ny = dx / len * expanded_width * 0.5;
-                    
+
                     vertices.push(crate::vertex::Vertex {
                         position: [start[0] - nx, start[1] - ny],
                         color: selection_color,
@@ -941,7 +1095,7 @@ impl State {
                         position: [end[0] - nx, end[1] - ny],
                         color: selection_color,
                     });
-                    
+
                     indices.extend_from_slice(&[
                         *index_offset,
                         *index_offset + 1,
@@ -958,7 +1112,7 @@ impl State {
                     for i in 0..points.len().saturating_sub(1) {
                         let p1 = points[i];
                         let p2 = points[i + 1];
-                        
+
                         let dx = p2[0] - p1[0];
                         let dy = p2[1] - p1[1];
                         let len = (dx * dx + dy * dy).sqrt();
@@ -966,7 +1120,7 @@ impl State {
                             let expanded_width = highlight_width * 2.0;
                             let nx = -dy / len * expanded_width * 0.5;
                             let ny = dx / len * expanded_width * 0.5;
-                            
+
                             vertices.push(crate::vertex::Vertex {
                                 position: [p1[0] - nx, p1[1] - ny],
                                 color: selection_color,
@@ -983,7 +1137,7 @@ impl State {
                                 position: [p2[0] - nx, p2[1] - ny],
                                 color: selection_color,
                             });
-                            
+
                             indices.extend_from_slice(&[
                                 *index_offset,
                                 *index_offset + 1,
@@ -1001,12 +1155,12 @@ impl State {
                 let dx = end[0] - start[0];
                 let dy = end[1] - start[1];
                 let len = (dx * dx + dy * dy).sqrt();
-                
+
                 if len > 0.0 {
                     let expanded_width = highlight_width * 2.0;
                     let nx = -dy / len * expanded_width * 0.5;
                     let ny = dx / len * expanded_width * 0.5;
-                    
+
                     vertices.push(crate::vertex::Vertex {
                         position: [start[0] - nx, start[1] - ny],
                         color: selection_color,
@@ -1023,7 +1177,7 @@ impl State {
                         position: [end[0] - nx, end[1] - ny],
                         color: selection_color,
                     });
-                    
+
                     indices.extend_from_slice(&[
                         *index_offset,
                         *index_offset + 1,
@@ -1033,6 +1187,60 @@ impl State {
                         *index_offset + 3,
                     ]);
                     *index_offset += 4;
+                }
+            }
+            crate::drawing::DrawingElement::Diamond { position, size, .. } => {
+                let margin = 5.0;
+                let center_x = position[0] + size[0] / 2.0;
+                let center_y = position[1] + size[1] / 2.0;
+                let half_width = (size[0] + margin * 2.0) / 2.0;
+                let half_height = (size[1] + margin * 2.0) / 2.0;
+
+                let diamond_points = [
+                    [center_x, center_y - half_height],
+                    [center_x + half_width, center_y],
+                    [center_x, center_y + half_height],
+                    [center_x - half_width, center_y],
+                ];
+
+                for i in 0..4 {
+                    let p1 = diamond_points[i];
+                    let p2 = diamond_points[(i + 1) % 4];
+
+                    let dx = p2[0] - p1[0];
+                    let dy = p2[1] - p1[1];
+                    let len = (dx * dx + dy * dy).sqrt();
+                    if len > 0.0 {
+                        let nx = -dy / len * highlight_width * 0.5;
+                        let ny = dx / len * highlight_width * 0.5;
+
+                        vertices.push(crate::vertex::Vertex {
+                            position: [p1[0] - nx, p1[1] - ny],
+                            color: selection_color,
+                        });
+                        vertices.push(crate::vertex::Vertex {
+                            position: [p1[0] + nx, p1[1] + ny],
+                            color: selection_color,
+                        });
+                        vertices.push(crate::vertex::Vertex {
+                            position: [p2[0] + nx, p2[1] + ny],
+                            color: selection_color,
+                        });
+                        vertices.push(crate::vertex::Vertex {
+                            position: [p2[0] - nx, p2[1] - ny],
+                            color: selection_color,
+                        });
+
+                        indices.extend_from_slice(&[
+                            *index_offset,
+                            *index_offset + 1,
+                            *index_offset + 2,
+                            *index_offset,
+                            *index_offset + 2,
+                            *index_offset + 3,
+                        ]);
+                        *index_offset += 4;
+                    }
                 }
             }
             _ => {}
