@@ -480,6 +480,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: Some(rough_options),
+                        style: self.current_style,
                     })
                 } else {
                     None
@@ -510,6 +511,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: Some(rough_options),
+                        style: self.current_style,
                     })
                 } else {
                     None
@@ -538,6 +540,7 @@ impl State {
                         color: self.current_color,
                         width: self.stroke_width,
                         rough_style: Some(rough_options),
+                        style: self.current_style,
                     })
                 } else {
                     None
@@ -566,6 +569,7 @@ impl State {
                         color: self.current_color,
                         width: self.stroke_width,
                         rough_style: Some(rough_options),
+                        style: self.current_style,
                     })
                 } else {
                     None
@@ -596,6 +600,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: Some(rough_options),
+                        style: self.current_style,
                     })
                 } else {
                     None
@@ -638,6 +643,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: None,
+                        style: self.current_style,
                     });
                 }
             }
@@ -658,6 +664,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: None,
+                        style: self.current_style,
                     });
                 }
             }
@@ -676,6 +683,7 @@ impl State {
                         ],
                         width: self.stroke_width,
                         rough_style: None,
+                        style: self.current_style,
                     });
                 }
             }
@@ -694,6 +702,7 @@ impl State {
                         ],
                         width: self.stroke_width,
                         rough_style: None,
+                        style: self.current_style,
                     });
                 }
             }
@@ -715,6 +724,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: None,
+                        style: self.current_style,
                     });
                 }
             }
@@ -769,6 +779,7 @@ impl State {
                 fill,
                 stroke_width,
                 rough_style,
+                style,
             } => {
                 let half_width = size[0] / 2.0;
                 let half_height = size[1] / 2.0;

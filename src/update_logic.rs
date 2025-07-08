@@ -153,6 +153,7 @@ impl State {
                     fill,
                     stroke_width,
                     rough_style,
+                    style,
                 } => {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
@@ -258,6 +259,7 @@ impl State {
                     fill,
                     stroke_width,
                     rough_style,
+                    style,
                 } => {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
@@ -371,6 +373,7 @@ impl State {
                     fill,
                     stroke_width,
                     rough_style,
+                    style,
                 } => {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
@@ -475,6 +478,7 @@ impl State {
                     color,
                     width,
                     rough_style,
+                    style,
                 } => {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
@@ -619,6 +623,7 @@ impl State {
                     color,
                     width,
                     rough_style,
+                    style,
                 } => {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
