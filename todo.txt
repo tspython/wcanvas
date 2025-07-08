@@ -21,3 +21,6 @@
 - Brush Styles
     - Dotted
     - Solid
+
+- Refactor
+    - A lot of shared functionality that can be refactored into functions to reduce LOC

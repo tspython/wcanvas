@@ -1,8 +1,8 @@
 use crate::canvas::{CanvasTransform, Uniforms};
-use crate::drawing::{DrawingElement, Tool};
+use crate::drawing::{DrawingElement, Style, Tool};
 use crate::state::{
-    Canvas, GeometryBuffers, GpuContext, InputState, TextInput, UiBuffers,
-    UiScreenBuffers, UiScreenUniforms, UserInputState::Idle,
+    Canvas, GeometryBuffers, GpuContext, InputState, TextInput, UiBuffers, UiScreenBuffers,
+    UiScreenUniforms, UserInputState::Idle,
 };
 use crate::text_renderer::TextRenderer;
 use crate::ui::UiRenderer;
@@ -34,6 +34,7 @@ pub struct State {
     pub elements: Vec<DrawingElement>,
     pub current_tool: Tool,
     pub current_color: [f32; 4],
+    pub current_style: Style,
     pub stroke_width: f32,
 
     pub ui_renderer: UiRenderer,
@@ -44,7 +45,7 @@ pub struct State {
 impl State {
     pub async fn new(window: Arc<Window>) -> State {
         let mut size = window.inner_size();
-        
+
         #[cfg(target_arch = "wasm32")]
         {
             if size.width == 0 || size.height == 0 {
@@ -195,9 +196,7 @@ impl State {
 
         let ui_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("UI Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../data/shaders/ui_shader.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../data/shaders/ui_shader.wgsl").into()),
         });
 
         let ui_uniform_bind_group_layout =
@@ -311,18 +310,26 @@ impl State {
         };
 
         let ui_renderer = UiRenderer::new();
-        let text_renderer = TextRenderer::new(&gpu.device, &gpu.queue, surface_format, &uniform_bind_group_layout, &ui_uniform_bind_group_layout);
+        let text_renderer = TextRenderer::new(
+            &gpu.device,
+            &gpu.queue,
+            surface_format,
+            &uniform_bind_group_layout,
+            &ui_uniform_bind_group_layout,
+        );
 
         let ui_screen_uniforms = UiScreenUniforms {
             screen_size: [size.width as f32, size.height as f32],
             _padding: [0.0, 0.0],
         };
 
-        let ui_screen_uniform_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("UI Screen Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[ui_screen_uniforms]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let ui_screen_uniform_buffer =
+            gpu.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("UI Screen Uniform Buffer"),
+                    contents: bytemuck::cast_slice(&[ui_screen_uniforms]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
         let ui_screen_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &ui_uniform_bind_group_layout,
@@ -338,6 +345,8 @@ impl State {
             bind_group: ui_screen_bind_group,
         };
 
+        let current_style = Style::Solid;
+
         Self {
             window,
             size,
@@ -349,15 +358,16 @@ impl State {
             typing,
             elements: Vec::new(),
             current_tool: Tool::Pen,
-            current_color: [0.0, 0.0, 0.0, 1.0], 
+            current_color: [0.0, 0.0, 0.0, 1.0],
             stroke_width: 2.0,
             ui_renderer,
             text_renderer,
             ui_screen,
+            current_style,
         }
     }
 
     pub fn window(&self) -> &Arc<Window> {
         &self.window
     }
-} 
+}
