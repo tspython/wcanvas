@@ -606,6 +606,36 @@ impl State {
                     None
                 }
             }
+            Tool::Diamond => {
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                    let position = [start[0].min(end[0]), start[1].min(end[1])];
+                    let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
+
+                    let mut rough_options = crate::rough::RoughOptions::default();
+                    rough_options.stroke_width = self.stroke_width;
+
+                    let mut rng = rand::rng();
+
+                    rough_options.roughness = 0.6 + rng.random::<f32>() * 0.8;
+                    rough_options.bowing = 0.4 + rng.random::<f32>() * 0.6;
+                    rough_options.max_randomness_offset = 1.0 + rng.random::<f32>() * 1.0;
+                    rough_options.curve_tightness = rng.random::<f32>() * 0.2;
+
+                    rough_options.seed = Some(rng.random::<u64>());
+
+                    Some(DrawingElement::Diamond {
+                        position,
+                        size,
+                        color: self.current_color,
+                        fill: false,
+                        stroke_width: self.stroke_width,
+                        rough_style: Some(rough_options),
+                    })
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
 
@@ -725,6 +755,27 @@ impl State {
                         stroke_width: self.stroke_width,
                         rough_style: None,
                         style: self.current_style,
+                    });
+                }
+            }
+            Tool::Diamond => {
+                if let Some(start) = self.input.drag_start {
+                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                    let position = [start[0].min(end[0]), start[1].min(end[1])];
+                    let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
+
+                    self.input.preview_element = Some(DrawingElement::Diamond {
+                        position,
+                        size,
+                        color: [
+                            self.current_color[0],
+                            self.current_color[1],
+                            self.current_color[2],
+                            0.5,
+                        ],
+                        fill: false,
+                        stroke_width: self.stroke_width,
+                        rough_style: None,
                     });
                 }
             }

@@ -66,6 +66,14 @@ pub enum DrawingElement {
         rough_style: Option<crate::rough::RoughOptions>,
         style: Style,
     },
+    Diamond {
+        position: [f32; 2],
+        size: [f32; 2],
+        color: [f32; 4],
+        fill: bool,
+        stroke_width: f32,
+        rough_style: Option<crate::rough::RoughOptions>,
+    },
     Arrow {
         start: [f32; 2],
         end: [f32; 2],
