@@ -342,6 +342,7 @@ impl State {
                                         color: self.current_color,
                                         size: 32.0,
                                     });
+                                    self.redo_stack.clear();
                                 }
                                 self.typing.active = false;
                                 self.typing.buffer.clear();
@@ -383,7 +384,26 @@ impl State {
                         }
                         winit::keyboard::KeyCode::KeyZ => {
                             if is_ctrl_or_cmd {
-                                self.elements.pop();
+                                if self.input.modifiers.shift_key() {
+                                    if let Some(element) = self.redo_stack.pop() {
+                                        self.elements.push(element);
+                                    }
+                                } else {
+                                    if let Some(element) = self.elements.pop() {
+                                        self.redo_stack.push(element);
+                                    }
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        #[cfg(target_os = "windows")]
+                        winit::keyboard::KeyCode::KeyY => {
+                            if is_ctrl_or_cmd {
+                                if let Some(element) = self.redo_stack.pop() {
+                                    self.elements.push(element);
+                                }
                                 true
                             } else {
                                 false
@@ -614,6 +634,7 @@ impl State {
 
         if let Some(element) = element {
             self.elements.push(element);
+            self.redo_stack.clear();
         }
 
         self.input.current_stroke.clear();
