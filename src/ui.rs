@@ -1,4 +1,5 @@
 use crate::{drawing::Tool, vertex::UiVertex};
+use crate::drawing::Style;
 
 const PALETTE_COLORS: [[f32; 4]; 6] = [
     [0.0, 0.0, 0.0, 1.0],
@@ -9,13 +10,22 @@ const PALETTE_COLORS: [[f32; 4]; 6] = [
     [0.14, 0.75, 0.37, 1.0],
 ];
 
+const STYLE_OPTIONS: [Style; 2] = [Style::Solid, Style::Dotted];
+
 pub struct UiRenderer {
     tool_icons: Vec<ToolIcon>,
     color_palette: Vec<ColorSwatch>,
+    style_options: Vec<StyleOption>,
 }
 
 struct ColorSwatch {
     color: [f32; 4],
+    position: [f32; 2],
+    size: [f32; 2],
+}
+
+struct StyleOption {
+    style: Style,
     position: [f32; 2],
     size: [f32; 2],
 }
@@ -110,9 +120,34 @@ impl UiRenderer {
             })
             .collect();
 
+        let style_options = STYLE_OPTIONS
+            .iter()
+            .enumerate()
+            .map(|(i, &style)| {
+                let cols = 2;
+                let swatch_size = 30.0;
+                let padding = 8.0;
+                let start_x = 15.0;
+                let start_y = 130.0;
+
+                let col = (i % cols) as f32;
+                let row = (i / cols) as f32;
+
+                StyleOption {
+                    style,
+                    position: [
+                        start_x + col as f32 * (swatch_size + padding),
+                        start_y + row as f32 * (swatch_size + padding),
+                    ],
+                    size: [swatch_size, swatch_size],
+                }
+            })
+            .collect();
+
         Self {
             tool_icons,
             color_palette,
+            style_options,
         }
     }
 
@@ -981,6 +1016,140 @@ impl UiRenderer {
         }
     }
 
+    fn generate_style_picker(
+        &self,
+        vertices: &mut Vec<UiVertex>,
+        indices: &mut Vec<u16>,
+        index_offset: &mut u16,
+        current_style: Style,
+    ) {
+        let swatch_size = 30.0;
+        let padding = 8.0;
+        let cols = 2;
+        let color_start_y = 90.0;
+        let color_rows = (PALETTE_COLORS.len() + cols - 1) / cols;
+        let palette_height = color_rows as f32 * swatch_size + (color_rows as f32 - 1.0) * padding;
+        let style_start_y = color_start_y + palette_height + padding;
+        let start_x = 15.0;
+
+        for (i, &style) in STYLE_OPTIONS.iter().enumerate() {
+            let col = (i % 2) as f32;
+            let row = (i / 2) as f32;
+
+            let center = [
+                start_x + col * (swatch_size + padding) + swatch_size * 0.5,
+                style_start_y + row * (swatch_size + padding) + swatch_size * 0.5,
+            ];
+
+            let is_selected = style == current_style;
+
+            let border_width = if is_selected { 2.0 } else { 1.0 };
+            let bg_color = if is_selected {
+                [0.25, 0.55, 0.95, 1.0]
+            } else {
+                [0.95, 0.95, 0.95, 1.0]
+            };
+
+            self.create_rounded_rect(
+                vertices,
+                indices,
+                index_offset,
+                center,
+                [swatch_size, swatch_size],
+                bg_color,
+                6.0,
+                border_width,
+            );
+
+            let line_color = if is_selected {
+                [1.0, 1.0, 1.0, 1.0]
+            } else {
+                [0.2, 0.2, 0.2, 1.0]
+            };
+
+            match style {
+                Style::Solid => {
+                    self.draw_solid_line_icon(
+                        vertices,
+                        indices,
+                        index_offset,
+                        center,
+                        swatch_size * 0.7,
+                        line_color,
+                    );
+                }
+                Style::Dotted => {
+                    self.draw_dotted_line_icon(
+                        vertices,
+                        indices,
+                        index_offset,
+                        center,
+                        swatch_size * 0.7,
+                        line_color,
+                    );
+                }
+            }
+        }
+    }
+
+    fn draw_solid_line_icon(
+        &self,
+        vertices: &mut Vec<UiVertex>,
+        indices: &mut Vec<u16>,
+        index_offset: &mut u16,
+        center: [f32; 2],
+        line_length: f32,
+        color: [f32; 4],
+    ) {
+        let thickness = 2.0;
+        let start_x = center[0] - line_length * 0.5;
+        let end_x = center[0] + line_length * 0.5;
+        let y = center[1];
+
+        self.create_simple_rect(
+            vertices,
+            indices,
+            index_offset,
+            [center[0], y],
+            [line_length, thickness],
+            color,
+        );
+    }
+
+    fn draw_dotted_line_icon(
+        &self,
+        vertices: &mut Vec<UiVertex>,
+        indices: &mut Vec<u16>,
+        index_offset: &mut u16,
+        center: [f32; 2],
+        line_length: f32,
+        color: [f32; 4],
+    ) {
+        let dot_size = line_length * 0.15;
+        let num_dots = 4;
+        let half_len = line_length * 0.5;
+        let spacing = if num_dots > 1 {
+            line_length / (num_dots as f32 - 1.0)
+        } else {
+            0.0
+        };
+        for i in 0..num_dots {
+            let offset = -half_len + spacing * i as f32;
+            let x = center[0] + offset;
+            let y = center[1] + offset;
+            self.create_rounded_rect(
+                vertices,
+                indices,
+                index_offset,
+                [x, y],
+                [dot_size, dot_size],
+                color,
+                dot_size * 0.5,
+                0.0,
+            );
+        }
+    }
+
     fn generate_toolbar(
         &self,
         vertices: &mut Vec<UiVertex>,
@@ -1130,6 +1299,7 @@ impl UiRenderer {
         &self,
         current_tool: Tool,
         current_color: [f32; 4],
+        current_style: Style,
         screen_size: (f32, f32),
         _zoom_level: f32,
     ) -> (Vec<UiVertex>, Vec<u16>) {
@@ -1142,6 +1312,12 @@ impl UiRenderer {
             &mut indices,
             &mut index_offset,
             current_color,
+        );
+        self.generate_style_picker(
+            &mut vertices,
+            &mut indices,
+            &mut index_offset,
+            current_style,
         );
         self.generate_toolbar(
             &mut vertices,
@@ -1174,6 +1350,34 @@ impl UiRenderer {
                 && mouse_pos[1] <= y + swatch_size
             {
                 return Some(color);
+            }
+        }
+        None
+    }
+
+    pub fn handle_style_click(&self, mouse_pos: [f32; 2]) -> Option<Style> {
+        let swatch_size = 30.0;
+        let padding = 8.0;
+        let cols = 2;
+        let color_start_y = 90.0;
+        let color_rows = (PALETTE_COLORS.len() + cols - 1) / cols;
+        let palette_height = color_rows as f32 * swatch_size + (color_rows as f32 - 1.0) * padding;
+        let style_start_y = color_start_y + palette_height + padding;
+        let start_x = 15.0;
+
+        for (i, &style) in STYLE_OPTIONS.iter().enumerate() {
+            let col = (i % 2) as f32;
+            let row = (i / 2) as f32;
+
+            let x = start_x + col * (swatch_size + padding);
+            let y = style_start_y + row * (swatch_size + padding);
+
+            if mouse_pos[0] >= x
+                && mouse_pos[0] <= x + swatch_size
+                && mouse_pos[1] >= y
+                && mouse_pos[1] <= y + swatch_size
+            {
+                return Some(style);
             }
         }
         None
@@ -1273,10 +1477,24 @@ impl UiRenderer {
         let palette_width = cols as f32 * swatch_size + (cols - 1) as f32 * padding;
         let palette_height = rows as f32 * swatch_size + (rows - 1) as f32 * padding;
 
-        mouse_pos[0] >= start_x
+        if mouse_pos[0] >= start_x
             && mouse_pos[0] <= start_x + palette_width
             && mouse_pos[1] >= start_y
             && mouse_pos[1] <= start_y + palette_height
+        {
+            return true;
+        }
+
+        let style_start_y = start_y + palette_height + padding;
+        let style_cols = 2;
+        let style_rows = (STYLE_OPTIONS.len() + style_cols - 1) / style_cols;
+        let style_palette_width = style_cols as f32 * swatch_size + (style_cols as f32 - 1.0) * padding;
+        let style_palette_height = style_rows as f32 * swatch_size + (style_rows as f32 - 1.0) * padding;
+
+        mouse_pos[0] >= start_x
+            && mouse_pos[0] <= start_x + style_palette_width
+            && mouse_pos[1] >= style_start_y
+            && mouse_pos[1] <= style_start_y + style_palette_height
     }
 
     pub fn generate_toolbar_icons(

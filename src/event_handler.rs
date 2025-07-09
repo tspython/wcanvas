@@ -95,6 +95,13 @@ impl State {
                                     return true;
                                 }
 
+                                if let Some(style) =
+                                    self.ui_renderer.handle_style_click(self.input.mouse_pos)
+                                {
+                                    self.current_style = style;
+                                    return true;
+                                }
+
                                 if self.ui_renderer.is_mouse_over_ui(
                                     self.input.mouse_pos,
                                     (self.size.width as f32, self.size.height as f32),
@@ -463,6 +470,7 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
+                    rough_options.dotted = self.current_style == crate::drawing::Style::Dotted;
 
                     let mut rng = rand::rng();
 
@@ -493,6 +501,7 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
+                    rough_options.dotted = self.current_style == crate::drawing::Style::Dotted;
 
                     let mut rng = rand::rng();
 
@@ -523,6 +532,7 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
+                    rough_options.dotted = self.current_style == crate::drawing::Style::Dotted;
 
                     let mut rng = rand::rng();
 
@@ -552,6 +562,7 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
+                    rough_options.dotted = self.current_style == crate::drawing::Style::Dotted;
 
                     let mut rng = rand::rng();
 
@@ -583,6 +594,7 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
+                    rough_options.dotted = self.current_style == crate::drawing::Style::Dotted;
 
                     let mut rng = rand::rng();
 
