@@ -14,6 +14,7 @@ pub struct RoughOptions {
     pub seed: Option<u64>,
     pub curve_tightness: f32,
     pub preserve_vertices: bool,
+    pub dotted: bool,
 }
 
 impl Default for RoughOptions {
@@ -28,6 +29,7 @@ impl Default for RoughOptions {
             seed: None,
             curve_tightness: 0.0,
             preserve_vertices: false,
+            dotted: false,
         }
     }
 }
@@ -64,6 +66,10 @@ impl RoughGenerator {
         end: [f32; 2],
         options: &RoughOptions,
     ) -> Vec<[f32; 2]> {
+        if options.dotted {
+            return self.rough_dotted_line(start, end, options);
+        }
+        
         let mut points = Vec::new();
 
         let length_sq = (start[0] - end[0]).powi(2) + (start[1] - end[1]).powi(2);
@@ -147,6 +153,93 @@ impl RoughGenerator {
         points
     }
 
+    fn rough_dotted_line(
+        &mut self,
+        start: [f32; 2],
+        end: [f32; 2],
+        options: &RoughOptions,
+    ) -> Vec<[f32; 2]> {
+        let mut points = Vec::new();
+        
+        let dx = end[0] - start[0];
+        let dy = end[1] - start[1];
+        let total_length = (dx * dx + dy * dy).sqrt();
+        
+        if total_length < 1.0 {
+            return vec![start, end];
+        }
+        
+        // Create evenly spaced dots with slight roughness like Excalidraw
+        let dot_spacing = (options.stroke_width * 4.0).max(8.0); // Tighter spacing for better arrowheads
+        let num_dots = (total_length / dot_spacing).floor() as u32;
+        
+        // Ensure short lines (like arrowheads) get at least one dot
+        let num_dots = if num_dots == 0 && total_length > 5.0 {
+            1
+        } else {
+            num_dots
+        };
+        
+        if num_dots == 0 {
+            return points;
+        }
+        
+        // Normalize direction
+        let dir_x = dx / total_length;
+        let dir_y = dy / total_length;
+        
+        // Create simple square dots - much simpler approach
+        for i in 0..num_dots {
+            let t = (i as f32 + 0.5) / num_dots as f32; // Center dots in segments
+            let base_pos = t * total_length;
+            
+            // Add slight random offset for hand-drawn feel
+            let offset = self.offset_opt(options.stroke_width * 0.3, options, 0.3);
+            let actual_pos = (base_pos + offset).clamp(0.0, total_length);
+            
+            let dot_center = [
+                start[0] + dir_x * actual_pos + self.offset_opt(options.stroke_width * 0.2, options, 0.2),
+                start[1] + dir_y * actual_pos + self.offset_opt(options.stroke_width * 0.2, options, 0.2),
+            ];
+            
+            points.push(dot_center);
+        }
+        
+        points
+    }
+
+    pub fn rough_dotted_lines(
+        &mut self,
+        lines: Vec<Vec<[f32; 2]>>,
+        options: &RoughOptions,
+    ) -> Vec<Vec<[f32; 2]>> {
+        if !options.dotted {
+            return lines;
+        }
+        
+        let mut dotted_lines = Vec::new();
+        
+        for line in lines {
+            if line.len() < 2 {
+                continue;
+            }
+            
+            for i in 0..line.len() - 1 {
+                let start = line[i];
+                let end = line[i + 1];
+                
+                let mut dot_options = options.clone();
+                dot_options.dotted = false; // Prevent infinite recursion
+                let dotted_segment = self.rough_dotted_line(start, end, &dot_options);
+                if !dotted_segment.is_empty() {
+                    dotted_lines.push(dotted_segment);
+                }
+            }
+        }
+        
+        dotted_lines
+    }
+
     fn bezier_curve(
         &self,
         p0: [f32; 2],
@@ -202,7 +295,11 @@ impl RoughGenerator {
             }
         }
 
-        lines
+        if options.dotted {
+            self.rough_dotted_lines(lines, options)
+        } else {
+            lines
+        }
     }
 
     pub fn rough_diamond(
@@ -238,7 +335,11 @@ impl RoughGenerator {
             }
         }
 
-        lines
+        if options.dotted {
+            self.rough_dotted_lines(lines, options)
+        } else {
+            lines
+        }
     }
 
     pub fn rough_ellipse(
@@ -289,7 +390,11 @@ impl RoughGenerator {
             result.push(points2);
         }
 
-        result
+        if options.dotted {
+            self.rough_dotted_lines(result, options)
+        } else {
+            result
+        }
     }
 
     fn compute_ellipse_points_varied(
@@ -499,6 +604,93 @@ impl RoughGenerator {
         (vertices, indices)
     }
 
+    pub fn dotted_points_to_vertices(
+        &self,
+        points: &[[f32; 2]],
+        color: [f32; 4],
+        width: f32,
+    ) -> (Vec<Vertex>, Vec<u16>) {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let mut index_offset = 0u16;
+
+        for (i, &dot_center) in points.iter().enumerate() {
+            let pill_length = width * 2.0;
+            let pill_radius = width * 0.5;
+            
+            let rotation = if points.len() > 1 {
+                if i == 0 {
+                    let next = points[1];
+                    let dx = next[0] - dot_center[0];
+                    let dy = next[1] - dot_center[1];
+                    dy.atan2(dx)
+                } else if i == points.len() - 1 {
+                    let prev = points[i - 1];
+                    let dx = dot_center[0] - prev[0];
+                    let dy = dot_center[1] - prev[1];
+                    dy.atan2(dx)
+                } else {
+                    let prev = points[i - 1];
+                    let next = points[i + 1];
+                    let dx1 = dot_center[0] - prev[0];
+                    let dy1 = dot_center[1] - prev[1];
+                    let dx2 = next[0] - dot_center[0];
+                    let dy2 = next[1] - dot_center[1];
+                    let angle1 = dy1.atan2(dx1);
+                    let angle2 = dy2.atan2(dx2);
+                    (angle1 + angle2) * 0.5
+                }
+            } else {
+                0.0
+            };
+            
+            let cos_rot = rotation.cos();
+            let sin_rot = rotation.sin();
+            let half_length = pill_length * 0.5;
+            
+            let segments = 16;
+            
+            vertices.push(Vertex { position: dot_center, color });
+            let center_idx = index_offset;
+            index_offset += 1;
+            
+            let segments_per_cap = 6;
+            let total_segments = segments_per_cap * 2;
+            
+            for j in 0..segments_per_cap {
+                let angle = (j as f32) / (segments_per_cap - 1) as f32 * std::f32::consts::PI - std::f32::consts::PI * 0.5;
+                let local_x = half_length + pill_radius * angle.cos();
+                let local_y = pill_radius * angle.sin();
+                
+                let x = dot_center[0] + local_x * cos_rot - local_y * sin_rot;
+                let y = dot_center[1] + local_x * sin_rot + local_y * cos_rot;
+                vertices.push(Vertex { position: [x, y], color });
+            }
+            
+            for j in 0..segments_per_cap {
+                let angle = (j as f32) / (segments_per_cap - 1) as f32 * std::f32::consts::PI + std::f32::consts::PI * 0.5;
+                let local_x = -half_length + pill_radius * angle.cos();
+                let local_y = pill_radius * angle.sin();
+                
+                let x = dot_center[0] + local_x * cos_rot - local_y * sin_rot;
+                let y = dot_center[1] + local_x * sin_rot + local_y * cos_rot;
+                vertices.push(Vertex { position: [x, y], color });
+            }
+            
+            for j in 0..total_segments {
+                let current = index_offset + j;
+                let next = index_offset + ((j + 1) % total_segments);
+                
+                indices.extend_from_slice(&[center_idx, current, next]);
+                indices.extend_from_slice(&[center_idx, next, current]);
+            }
+            
+            index_offset += total_segments;
+        }
+
+        (vertices, indices)
+    }
+
     pub fn rough_arrow(
         &mut self,
         start: [f32; 2],
@@ -549,6 +741,130 @@ impl RoughGenerator {
             }
         }
 
+        if options.dotted {
+            self.rough_dotted_lines(lines, options)
+        } else {
+            lines
+        }
+    }
+
+    pub fn rough_arrow_with_solid_head(
+        &mut self,
+        start: [f32; 2],
+        end: [f32; 2],
+        options: &RoughOptions,
+    ) -> (Vec<Vec<[f32; 2]>>, Option<[[f32; 2]; 3]>) {
+        let mut shaft_lines = Vec::new();
+
+        // Generate shaft lines
+        let shaft_line = self.rough_line(start, end, options);
+        shaft_lines.push(shaft_line);
+
+        if !options.disable_multi_stroke {
+            let shaft_line2 = self.rough_line(start, end, options);
+            shaft_lines.push(shaft_line2);
+        }
+
+        // Generate arrowhead as solid triangle
+        let dx = end[0] - start[0];
+        let dy = end[1] - start[1];
+        let len = (dx * dx + dy * dy).sqrt();
+
+        let arrowhead = if len > 0.0 {
+            let head_len = (20.0 + self.offset_opt(5.0, options, 1.0)).max(10.0);
+            let head_angle = 0.5 + self.offset_opt(0.1, options, 1.0);
+
+            let dir_x = dx / len;
+            let dir_y = dy / len;
+
+            let cos_angle = head_angle.cos();
+            let sin_angle = head_angle.sin();
+
+            let left_x = end[0] - head_len * (dir_x * cos_angle - dir_y * sin_angle);
+            let left_y = end[1] - head_len * (dir_y * cos_angle + dir_x * sin_angle);
+
+            let right_x = end[0] - head_len * (dir_x * cos_angle + dir_y * sin_angle);
+            let right_y = end[1] - head_len * (dir_y * cos_angle - dir_x * sin_angle);
+
+            Some([[left_x, left_y], end, [right_x, right_y]])
+        } else {
+            None
+        };
+
+        // Apply dotting only to shaft lines
+        let final_shaft_lines = if options.dotted {
+            self.rough_dotted_lines(shaft_lines, options)
+        } else {
+            shaft_lines
+        };
+
+        (final_shaft_lines, arrowhead)
+    }
+
+    pub fn rough_dotted_arrow(
+        &mut self,
+        start: [f32; 2],
+        end: [f32; 2],
+        options: &RoughOptions,
+    ) -> Vec<Vec<[f32; 2]>> {
+        // Shaft first
+        let shaft_points = self.rough_dotted_line(start, end, options);
+        let mut lines: Vec<Vec<[f32; 2]>> = vec![shaft_points];
+
+        // --- Arrowhead computation ---
+        let dx = end[0] - start[0];
+        let dy = end[1] - start[1];
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 1.0 {
+            return lines;
+        }
+
+        // Geometry for arrowhead
+        let head_len = (20.0 + self.offset_opt(5.0, options, 1.0)).max(12.0);
+        let head_angle = 0.5 + self.offset_opt(0.1, options, 1.0);
+        let dir_x = dx / len;
+        let dir_y = dy / len;
+        let cos_a = head_angle.cos();
+        let sin_a = head_angle.sin();
+        let left_pt = [
+            end[0] - head_len * (dir_x * cos_a - dir_y * sin_a),
+            end[1] - head_len * (dir_y * cos_a + dir_x * sin_a),
+        ];
+        let right_pt = [
+            end[0] - head_len * (dir_x * cos_a + dir_y * sin_a),
+            end[1] - head_len * (dir_y * cos_a - dir_x * sin_a),
+        ];
+
+        // Helper to create dense dot line between two points
+        let mut dense_dots = |p1: [f32; 2], p2: [f32; 2]| -> Vec<[f32; 2]> {
+            let dx = p2[0] - p1[0];
+            let dy = p2[1] - p1[1];
+            let seg_len = (dx * dx + dy * dy).sqrt();
+            let spacing = (options.stroke_width * 2.0).max(6.0);
+            let mut pts = Vec::new();
+            if seg_len < 0.5 {
+                return pts;
+            }
+            let count = ((seg_len / spacing).floor() as u32).max(1);
+            for i in 0..=count {
+                let t = i as f32 / count as f32;
+                pts.push([p1[0] + dx * t, p1[1] + dy * t]);
+            }
+            pts
+        };
+
+        // Generate dots for each arrowhead edge
+        let left_edge_pts = dense_dots(end, left_pt);
+        if !left_edge_pts.is_empty() {
+            lines.push(left_edge_pts);
+        }
+        let right_edge_pts = dense_dots(end, right_pt);
+        if !right_edge_pts.is_empty() {
+            lines.push(right_edge_pts);
+        }
+
         lines
     }
+
+
 }
