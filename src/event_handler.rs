@@ -2,6 +2,7 @@ use crate::app_state::State;
 use crate::drawing::{DrawingElement, Tool};
 use crate::state::UserInputState::{Dragging, Drawing, Idle, Panning};
 use rand::Rng;
+use winit::keyboard::KeyCode;
 
 use winit::event::*;
 
@@ -326,14 +327,14 @@ impl State {
 
                 if let Some(keycode) = keycode_opt {
                     match keycode {
-                        winit::keyboard::KeyCode::Backspace => {
+                        KeyCode::Backspace => {
                             if self.typing.active && !self.typing.buffer.is_empty() {
                                 self.typing.buffer.pop();
                                 return true;
                             }
                             false
                         }
-                        winit::keyboard::KeyCode::Enter => {
+                        KeyCode::Enter => {
                             if self.typing.active {
                                 if !self.typing.buffer.is_empty() {
                                     self.elements.push(DrawingElement::Text {
@@ -342,6 +343,7 @@ impl State {
                                         color: self.current_color,
                                         size: 32.0,
                                     });
+                                    self.redo_stack.clear();
                                 }
                                 self.typing.active = false;
                                 self.typing.buffer.clear();
@@ -349,39 +351,59 @@ impl State {
                             }
                             false
                         }
-                        winit::keyboard::KeyCode::Digit1 => {
+                        KeyCode::Digit1 => {
                             self.current_tool = Tool::Select;
                             true
                         }
-                        winit::keyboard::KeyCode::Digit2 => {
+                        KeyCode::Digit2 => {
                             self.current_tool = Tool::Pen;
                             true
                         }
-                        winit::keyboard::KeyCode::Digit3 => {
+                        KeyCode::Digit3 => {
                             self.current_tool = Tool::Rectangle;
                             true
                         }
-                        winit::keyboard::KeyCode::Digit4 => {
+                        KeyCode::Digit4 => {
                             self.current_tool = Tool::Circle;
                             true
                         }
-                        winit::keyboard::KeyCode::Digit5 => {
+                        KeyCode::Digit5 => {
                             self.current_tool = Tool::Arrow;
                             true
                         }
-                        winit::keyboard::KeyCode::Digit6 => {
+                        KeyCode::Digit6 => {
                             self.current_tool = Tool::Text;
                             true
                         }
-                        winit::keyboard::KeyCode::Digit7 => {
+                        KeyCode::Digit7 => {
                             self.current_tool = Tool::Line;
                             true
                         }
-                        winit::keyboard::KeyCode::Digit8 => {
+                        KeyCode::Digit8 => {
                             self.current_tool = Tool::Eraser;
                             true
                         }
-                        winit::keyboard::KeyCode::Minus => {
+                        KeyCode::KeyY => {
+                            if is_ctrl_or_cmd {
+                                if let Some(element) = self.redo_stack.pop() {
+                                    self.elements.push(element);
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        KeyCode::KeyZ => {
+                            if is_ctrl_or_cmd {
+                                if let Some(element) = self.elements.pop() {
+                                    self.redo_stack.push(element);
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        KeyCode::Minus => {
                             if is_ctrl_or_cmd {
                                 self.canvas.transform.scale *= 0.9;
                                 self.canvas.transform.scale =
@@ -400,7 +422,7 @@ impl State {
                                 false
                             }
                         }
-                        winit::keyboard::KeyCode::Equal => {
+                        KeyCode::Equal => {
                             if is_ctrl_or_cmd {
                                 self.canvas.transform.scale *= 1.1;
                                 self.canvas.transform.scale =
@@ -606,6 +628,7 @@ impl State {
 
         if let Some(element) = element {
             self.elements.push(element);
+            self.redo_stack.clear();
         }
 
         self.input.current_stroke.clear();

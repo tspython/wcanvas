@@ -32,6 +32,7 @@ pub struct State {
     pub typing: TextInput,
 
     pub elements: Vec<DrawingElement>,
+    pub redo_stack: Vec<DrawingElement>,
     pub current_tool: Tool,
     pub current_color: [f32; 4],
     pub stroke_width: f32,
@@ -348,6 +349,7 @@ impl State {
             input,
             typing,
             elements: Vec::new(),
+            redo_stack: Vec::new(),
             current_tool: Tool::Pen,
             current_color: [0.0, 0.0, 0.0, 1.0], 
             stroke_width: 2.0,
