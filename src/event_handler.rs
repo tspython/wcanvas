@@ -381,6 +381,14 @@ impl State {
                             self.current_tool = Tool::Eraser;
                             true
                         }
+                        winit::keyboard::KeyCode::KeyZ => {
+                            if is_ctrl_or_cmd {
+                                self.elements.pop();
+                                true
+                            } else {
+                                false
+                            }
+                        }
                         winit::keyboard::KeyCode::Minus => {
                             if is_ctrl_or_cmd {
                                 self.canvas.transform.scale *= 0.9;
