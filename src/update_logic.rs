@@ -23,6 +23,7 @@ impl State {
         let (ui_vertices, ui_indices) = self.ui_renderer.generate_ui_vertices(
             self.current_tool,
             self.current_color,
+            self.current_style,
             (self.size.width as f32, self.size.height as f32),
             self.canvas.transform.scale,
         );
@@ -153,6 +154,7 @@ impl State {
                     fill,
                     stroke_width,
                     rough_style,
+                    style,
                 } => {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
@@ -160,18 +162,30 @@ impl State {
                             generator.rough_rectangle(*position, *size, rough_options);
 
                         for line_points in rough_lines {
-                            let (line_vertices, line_indices) = generator.points_to_vertices(
-                                &line_points,
-                                *color,
-                                rough_options.stroke_width,
-                            );
+                            let (line_vertices, line_indices) = if rough_options.dotted {
+                                generator.dotted_points_to_vertices(
+                                    &line_points,
+                                    *color,
+                                    rough_options.stroke_width,
+                                )
+                            } else {
+                                generator.points_to_vertices(
+                                    &line_points,
+                                    *color,
+                                    rough_options.stroke_width,
+                                )
+                            };
 
                             let offset_indices: Vec<u16> =
                                 line_indices.iter().map(|&i| i + index_offset).collect();
 
                             vertices.extend(line_vertices);
                             indices.extend(offset_indices);
-                            index_offset += line_points.len().saturating_sub(1) as u16 * 4;
+                            index_offset += if rough_options.dotted {
+                                line_points.len() as u16 * 13  // 1 center + 12 edge vertices per dot (pill shape)
+                            } else {
+                                line_points.len().saturating_sub(1) as u16 * 4
+                            };
                         }
                     } else {
                         if *fill {
@@ -258,6 +272,7 @@ impl State {
                     fill,
                     stroke_width,
                     rough_style,
+                    style,
                 } => {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
@@ -266,18 +281,30 @@ impl State {
                             generator.rough_ellipse(*center, diameter, diameter, rough_options);
 
                         for line_points in rough_lines {
-                            let (line_vertices, line_indices) = generator.points_to_vertices(
-                                &line_points,
-                                *color,
-                                rough_options.stroke_width,
-                            );
+                            let (line_vertices, line_indices) = if rough_options.dotted {
+                                generator.dotted_points_to_vertices(
+                                    &line_points,
+                                    *color,
+                                    rough_options.stroke_width,
+                                )
+                            } else {
+                                generator.points_to_vertices(
+                                    &line_points,
+                                    *color,
+                                    rough_options.stroke_width,
+                                )
+                            };
 
                             let offset_indices: Vec<u16> =
                                 line_indices.iter().map(|&i| i + index_offset).collect();
 
                             vertices.extend(line_vertices);
                             indices.extend(offset_indices);
-                            index_offset += line_points.len().saturating_sub(1) as u16 * 4;
+                            index_offset += if rough_options.dotted {
+                                line_points.len() as u16 * 13
+                            } else {
+                                line_points.len().saturating_sub(1) as u16 * 4
+                            };
                         }
                     } else {
                         const SEGMENTS: u32 = 32;
@@ -371,24 +398,37 @@ impl State {
                     fill,
                     stroke_width,
                     rough_style,
+                    style,
                 } => {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                         let rough_lines = generator.rough_diamond(*position, *size, rough_options);
 
                         for line_points in rough_lines {
-                            let (line_vertices, line_indicies) = generator.points_to_vertices(
-                                &line_points,
-                                *color,
-                                rough_options.stroke_width,
-                            );
+                            let (line_vertices, line_indicies) = if rough_options.dotted {
+                                generator.dotted_points_to_vertices(
+                                    &line_points,
+                                    *color,
+                                    rough_options.stroke_width,
+                                )
+                            } else {
+                                generator.points_to_vertices(
+                                    &line_points,
+                                    *color,
+                                    rough_options.stroke_width,
+                                )
+                            };
 
                             let offset_indicies: Vec<u16> =
                                 line_indicies.iter().map(|&i| i + index_offset).collect();
 
                             vertices.extend(line_vertices);
                             indices.extend(offset_indicies);
-                            index_offset += line_points.len().saturating_sub(1) as u16 * 4;
+                            index_offset += if rough_options.dotted {
+                                line_points.len() as u16 * 13
+                            } else {
+                                line_points.len().saturating_sub(1) as u16 * 4
+                            };
                         }
                     } else {
                         let center_x = position[0] + size[0] / 2.0;
@@ -475,24 +515,42 @@ impl State {
                     color,
                     width,
                     rough_style,
+                    style,
                 } => {
                     if let Some(rough_options) = rough_style {
                         let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
-                        let rough_lines = generator.rough_arrow(*start, *end, rough_options);
+                        
+                        let rough_lines = if rough_options.dotted {
+                            generator.rough_dotted_arrow(*start, *end, rough_options)
+                        } else {
+                            generator.rough_arrow(*start, *end, rough_options)
+                        };
 
                         for line_points in rough_lines {
-                            let (line_vertices, line_indices) = generator.points_to_vertices(
-                                &line_points,
-                                *color,
-                                rough_options.stroke_width,
-                            );
+                            let (line_vertices, line_indices) = if rough_options.dotted {
+                                generator.dotted_points_to_vertices(
+                                    &line_points,
+                                    *color,
+                                    rough_options.stroke_width,
+                                )
+                            } else {
+                                generator.points_to_vertices(
+                                    &line_points,
+                                    *color,
+                                    rough_options.stroke_width,
+                                )
+                            };
 
                             let offset_indices: Vec<u16> =
                                 line_indices.iter().map(|&i| i + index_offset).collect();
 
                             vertices.extend(line_vertices);
                             indices.extend(offset_indices);
-                            index_offset += line_points.len().saturating_sub(1) as u16 * 4;
+                            index_offset += if rough_options.dotted {
+                                line_points.len() as u16 * 13
+                            } else {
+                                line_points.len().saturating_sub(1) as u16 * 4
+                            };
                         }
                     } else {
                         let dx = end[0] - start[0];
@@ -619,73 +677,44 @@ impl State {
                     color,
                     width,
                     rough_style,
+                    style,
                 } => {
-                    if let Some(rough_options) = rough_style {
-                        let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
-                        let rough_line = generator.rough_line(*start, *end, rough_options);
-
-                        let (line_vertices, line_indices) = generator.points_to_vertices(
-                            &rough_line,
-                            *color,
-                            rough_options.stroke_width,
-                        );
-
-                        let offset_indices: Vec<u16> =
-                            line_indices.iter().map(|&i| i + index_offset).collect();
-
-                        vertices.extend(line_vertices);
-                        indices.extend(offset_indices);
-                        index_offset += rough_line.len().saturating_sub(1) as u16 * 4;
-
-                        if !rough_options.disable_multi_stroke {
-                            let rough_line2 = generator.rough_line(*start, *end, rough_options);
-                            let (line_vertices2, line_indices2) = generator.points_to_vertices(
-                                &rough_line2,
-                                *color,
-                                rough_options.stroke_width,
-                            );
-
-                            let offset_indices2: Vec<u16> =
-                                line_indices2.iter().map(|&i| i + index_offset).collect();
-
-                            vertices.extend(line_vertices2);
-                            indices.extend(offset_indices2);
-                            index_offset += rough_line2.len().saturating_sub(1) as u16 * 4;
+                    if let Some(opts) = rough_style {
+                        let mut generator = crate::rough::RoughGenerator::new(opts.seed);
+                        let r1 = generator.rough_line(*start, *end, opts);
+                        
+                        if opts.dotted {
+                                                        let (v1, i1) = generator.dotted_points_to_vertices(&r1, *color, opts.stroke_width);
+                            indices.extend(i1.iter().map(|&i| i + index_offset));
+                            let v1_len = v1.len() as u16;
+                            vertices.extend(v1);
+                            index_offset += v1_len;
+                        } else {
+                            let (v1, i1) = generator.points_to_vertices(&r1, *color, opts.stroke_width);
+                            indices.extend(i1.iter().map(|&i| i + index_offset));
+                            vertices.extend(v1);
+                            index_offset += r1.len().saturating_sub(1) as u16 * 4;
+                            if !opts.disable_multi_stroke {
+                                let r2 = generator.rough_line(*start, *end, opts);
+                                let (v2, i2) = generator.points_to_vertices(&r2, *color, opts.stroke_width);
+                                indices.extend(i2.iter().map(|&i| i + index_offset));
+                                vertices.extend(v2);
+                                index_offset += r2.len().saturating_sub(1) as u16 * 4;
+                            }
                         }
                     } else {
+                        // Simple solid line (preview or non-rough)
                         let dx = end[0] - start[0];
                         let dy = end[1] - start[1];
                         let len = (dx * dx + dy * dy).sqrt();
-
                         if len > 0.0 {
                             let nx = -dy / len * width * 0.5;
                             let ny = dx / len * width * 0.5;
-
-                            vertices.push(Vertex {
-                                position: [start[0] - nx, start[1] - ny],
-                                color: *color,
-                            });
-                            vertices.push(Vertex {
-                                position: [start[0] + nx, start[1] + ny],
-                                color: *color,
-                            });
-                            vertices.push(Vertex {
-                                position: [end[0] + nx, end[1] + ny],
-                                color: *color,
-                            });
-                            vertices.push(Vertex {
-                                position: [end[0] - nx, end[1] - ny],
-                                color: *color,
-                            });
-
-                            indices.extend_from_slice(&[
-                                index_offset,
-                                index_offset + 1,
-                                index_offset + 2,
-                                index_offset,
-                                index_offset + 2,
-                                index_offset + 3,
-                            ]);
+                            vertices.push(Vertex { position: [start[0] - nx, start[1] - ny], color: *color });
+                            vertices.push(Vertex { position: [start[0] + nx, start[1] + ny], color: *color });
+                            vertices.push(Vertex { position: [end[0] + nx, end[1] + ny], color: *color });
+                            vertices.push(Vertex { position: [end[0] - nx, end[1] - ny], color: *color });
+                            indices.extend_from_slice(&[index_offset, index_offset + 1, index_offset + 2, index_offset, index_offset + 2, index_offset + 3]);
                             index_offset += 4;
                         }
                     }

@@ -95,6 +95,13 @@ impl State {
                                     return true;
                                 }
 
+                                if let Some(style) =
+                                    self.ui_renderer.handle_style_click(self.input.mouse_pos)
+                                {
+                                    self.current_style = style;
+                                    return true;
+                                }
+
                                 if self.ui_renderer.is_mouse_over_ui(
                                     self.input.mouse_pos,
                                     (self.size.width as f32, self.size.height as f32),
@@ -463,6 +470,7 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
+                    rough_options.dotted = self.current_style == crate::drawing::Style::Dotted;
 
                     let mut rng = rand::rng();
 
@@ -480,6 +488,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: Some(rough_options),
+                        style: self.current_style,
                     })
                 } else {
                     None
@@ -492,6 +501,7 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
+                    rough_options.dotted = self.current_style == crate::drawing::Style::Dotted;
 
                     let mut rng = rand::rng();
 
@@ -510,6 +520,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: Some(rough_options),
+                        style: self.current_style,
                     })
                 } else {
                     None
@@ -521,6 +532,7 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
+                    rough_options.dotted = self.current_style == crate::drawing::Style::Dotted;
 
                     let mut rng = rand::rng();
 
@@ -538,6 +550,7 @@ impl State {
                         color: self.current_color,
                         width: self.stroke_width,
                         rough_style: Some(rough_options),
+                        style: self.current_style,
                     })
                 } else {
                     None
@@ -549,6 +562,7 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
+                    rough_options.dotted = self.current_style == crate::drawing::Style::Dotted;
 
                     let mut rng = rand::rng();
 
@@ -566,6 +580,7 @@ impl State {
                         color: self.current_color,
                         width: self.stroke_width,
                         rough_style: Some(rough_options),
+                        style: self.current_style,
                     })
                 } else {
                     None
@@ -579,6 +594,7 @@ impl State {
 
                     let mut rough_options = crate::rough::RoughOptions::default();
                     rough_options.stroke_width = self.stroke_width;
+                    rough_options.dotted = self.current_style == crate::drawing::Style::Dotted;
 
                     let mut rng = rand::rng();
 
@@ -596,6 +612,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: Some(rough_options),
+                        style: self.current_style,
                     })
                 } else {
                     None
@@ -638,6 +655,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: None,
+                        style: self.current_style,
                     });
                 }
             }
@@ -658,6 +676,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: None,
+                        style: self.current_style,
                     });
                 }
             }
@@ -676,6 +695,7 @@ impl State {
                         ],
                         width: self.stroke_width,
                         rough_style: None,
+                        style: self.current_style,
                     });
                 }
             }
@@ -694,6 +714,7 @@ impl State {
                         ],
                         width: self.stroke_width,
                         rough_style: None,
+                        style: self.current_style,
                     });
                 }
             }
@@ -715,6 +736,7 @@ impl State {
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: None,
+                        style: self.current_style,
                     });
                 }
             }
@@ -769,6 +791,7 @@ impl State {
                 fill,
                 stroke_width,
                 rough_style,
+                style,
             } => {
                 let half_width = size[0] / 2.0;
                 let half_height = size[1] / 2.0;
