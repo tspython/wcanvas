@@ -382,27 +382,20 @@ impl State {
                             self.current_tool = Tool::Eraser;
                             true
                         }
-                        winit::keyboard::KeyCode::KeyZ => {
+                        winit::keyboard::KeyCode::KeyY => {
                             if is_ctrl_or_cmd {
-                                if self.input.modifiers.shift_key() {
-                                    if let Some(element) = self.redo_stack.pop() {
-                                        self.elements.push(element);
-                                    }
-                                } else {
-                                    if let Some(element) = self.elements.pop() {
-                                        self.redo_stack.push(element);
-                                    }
+                                if let Some(element) = self.redo_stack.pop() {
+                                    self.elements.push(element);
                                 }
                                 true
                             } else {
                                 false
                             }
                         }
-                        #[cfg(target_os = "windows")]
-                        winit::keyboard::KeyCode::KeyY => {
+                        winit::keyboard::KeyCode::KeyZ => {
                             if is_ctrl_or_cmd {
-                                if let Some(element) = self.redo_stack.pop() {
-                                    self.elements.push(element);
+                                if let Some(element) = self.elements.pop() {
+                                    self.redo_stack.push(element);
                                 }
                                 true
                             } else {
