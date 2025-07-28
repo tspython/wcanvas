@@ -12,6 +12,12 @@ pub enum Tool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Style {
+    Dotted,
+    Solid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BoxState {
     Idle,
     Selected,
@@ -31,6 +37,7 @@ pub enum DrawingElement {
         color: [f32; 4],
         width: f32,
         rough_style: Option<crate::rough::RoughOptions>,
+        style: Style,
     },
     Rectangle {
         position: [f32; 2],
@@ -39,6 +46,7 @@ pub enum DrawingElement {
         fill: bool,
         stroke_width: f32,
         rough_style: Option<crate::rough::RoughOptions>,
+        style: Style,
     },
     Circle {
         center: [f32; 2],
@@ -47,6 +55,7 @@ pub enum DrawingElement {
         fill: bool,
         stroke_width: f32,
         rough_style: Option<crate::rough::RoughOptions>,
+        style: Style,
     },
     Diamond {
         position: [f32; 2],
@@ -55,6 +64,7 @@ pub enum DrawingElement {
         fill: bool,
         stroke_width: f32,
         rough_style: Option<crate::rough::RoughOptions>,
+        style: Style,
     },
     Arrow {
         start: [f32; 2],
@@ -62,6 +72,7 @@ pub enum DrawingElement {
         color: [f32; 4],
         width: f32,
         rough_style: Option<crate::rough::RoughOptions>,
+        style: Style,
     },
     Text {
         position: [f32; 2],

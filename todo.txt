@@ -11,4 +11,16 @@
     - We currently have preset colors, I want to have the user be able to use those preset colors as a base and custom configure them either using a color wheel or a color picker.
 
 - Toolbar
-    - Diamond Shape
+    - Diamond Shape [x]
+    - SVG Rendering
+
+- Saving State
+    - Save as Json?
+    - if window event = close -> ask to save drawing
+
+- Brush Styles
+    - Dotted
+    - Solid
+
+- Refactor
+    - A lot of shared functionality that can be refactored into functions to reduce LOC
