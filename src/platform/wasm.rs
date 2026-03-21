@@ -1,5 +1,5 @@
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 
 pub fn save_to_local_storage(key: &str, json: &str) {
     if let Some(window) = web_sys::window() {
@@ -32,7 +32,7 @@ pub fn trigger_download(filename: &str, content: &str) {
     parts.push(&JsValue::from_str(content));
 
     let mut options = web_sys::BlobPropertyBag::new();
-    options.type_("application/json");
+    options.set_type("application/json");
 
     let blob = match web_sys::Blob::new_with_str_sequence_and_options(&parts, &options) {
         Ok(b) => b,

@@ -1,4 +1,4 @@
-use crate::drawing::DrawingElement;
+use crate::drawing::{DrawingElement, Element};
 use ab_glyph::{Font, FontArc, ScaleFont, point};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -47,10 +47,10 @@ pub struct GlyphInfo {
     advance: f32,
 }
 
-const MSDF_SIZE: u32 = 64;          
-const MSDF_RANGE: f32 = 6.0;        
-const MSDF_BASE_SIZE: f32 = 64.0;   
-const ATLAS_SIZE: u32 = 2048; 
+const MSDF_SIZE: u32 = 64;
+const MSDF_RANGE: f32 = 6.0;
+const MSDF_BASE_SIZE: f32 = 64.0;
+const ATLAS_SIZE: u32 = 2048;
 
 pub struct TextRenderer {
     font: FontArc,
@@ -78,26 +78,30 @@ fn generate_msdf(bitmap: &[u8], width: u32, height: u32) -> Vec<u8> {
     let msdf_width = MSDF_SIZE;
     let msdf_height = MSDF_SIZE;
     let mut msdf = vec![0u8; (msdf_width * msdf_height * 3) as usize];
-    
+
     let scale_x = width as f32 / msdf_width as f32;
     let scale_y = height as f32 / msdf_height as f32;
     let range = MSDF_RANGE;
-    
+
     let mut smoothed_bitmap = vec![0.0f32; (width * height) as usize];
     for y in 0..height {
         for x in 0..width {
             let mut sum = 0.0;
             let mut count = 0;
-            
+
             for dy in -1i32..=1 {
                 for dx in -1i32..=1 {
                     let nx = (x as i32 + dx).clamp(0, width as i32 - 1) as u32;
                     let ny = (y as i32 + dy).clamp(0, height as i32 - 1) as u32;
-                    
-                    let weight = if dx == 0 && dy == 0 { 4.0 } 
-                               else if dx.abs() + dy.abs() == 1 { 2.0 } 
-                               else { 1.0 };
-                    
+
+                    let weight = if dx == 0 && dy == 0 {
+                        4.0
+                    } else if dx.abs() + dy.abs() == 1 {
+                        2.0
+                    } else {
+                        1.0
+                    };
+
                     sum += (bitmap[(ny * width + nx) as usize] as f32 / 255.0) * weight;
                     count += weight as i32;
                 }
@@ -105,96 +109,106 @@ fn generate_msdf(bitmap: &[u8], width: u32, height: u32) -> Vec<u8> {
             smoothed_bitmap[(y * width + x) as usize] = sum / count as f32;
         }
     }
-    
+
     for y in 0..msdf_height {
         for x in 0..msdf_width {
             let src_x = (x as f32 * scale_x).clamp(0.0, (width - 1) as f32);
             let src_y = (y as f32 * scale_y).clamp(0.0, (height - 1) as f32);
-            
+
             let x0 = src_x.floor() as u32;
             let y0 = src_y.floor() as u32;
             let x1 = (x0 + 1).min(width - 1);
             let y1 = (y0 + 1).min(height - 1);
-            
+
             let fx = src_x - x0 as f32;
             let fy = src_y - y0 as f32;
-            
+
             let v00 = smoothed_bitmap[(y0 * width + x0) as usize];
             let v10 = smoothed_bitmap[(y0 * width + x1) as usize];
             let v01 = smoothed_bitmap[(y1 * width + x0) as usize];
             let v11 = smoothed_bitmap[(y1 * width + x1) as usize];
-            
+
             let v0 = v00 * (1.0 - fx) + v10 * fx;
             let v1 = v01 * (1.0 - fx) + v11 * fx;
             let center_alpha = v0 * (1.0 - fy) + v1 * fy;
-            
+
             let is_inside = center_alpha > 0.5;
-            
+
             let mut min_dist = range;
             let search_radius = (range * scale_x.max(scale_y)) as i32 + 2;
-            
+
             for dy in -search_radius..=search_radius {
                 for dx in -search_radius..=search_radius {
                     let check_x = src_x + dx as f32 / scale_x;
                     let check_y = src_y + dy as f32 / scale_y;
-                    
-                    if check_x < 0.0 || check_x >= width as f32 - 1.0 || 
-                       check_y < 0.0 || check_y >= height as f32 - 1.0 {
+
+                    if check_x < 0.0
+                        || check_x >= width as f32 - 1.0
+                        || check_y < 0.0
+                        || check_y >= height as f32 - 1.0
+                    {
                         continue;
                     }
-                    
+
                     let cx0 = check_x.floor() as u32;
                     let cy0 = check_y.floor() as u32;
                     let cx1 = (cx0 + 1).min(width - 1);
                     let cy1 = (cy0 + 1).min(height - 1);
-                    
-                    if cx1 >= width || cy1 >= height { continue; }
-                    
+
+                    if cx1 >= width || cy1 >= height {
+                        continue;
+                    }
+
                     let cfx = check_x - cx0 as f32;
                     let cfy = check_y - cy0 as f32;
-                    
+
                     let cv00 = smoothed_bitmap[(cy0 * width + cx0) as usize];
                     let cv10 = smoothed_bitmap[(cy0 * width + cx1) as usize];
                     let cv01 = smoothed_bitmap[(cy1 * width + cx0) as usize];
                     let cv11 = smoothed_bitmap[(cy1 * width + cx1) as usize];
-                    
+
                     let cv0 = cv00 * (1.0 - cfx) + cv10 * cfx;
                     let cv1 = cv01 * (1.0 - cfx) + cv11 * cfx;
                     let check_alpha = cv0 * (1.0 - cfy) + cv1 * cfy;
-                    
+
                     let check_inside = check_alpha > 0.5;
-                    
+
                     if is_inside != check_inside {
-                        let dist = ((dx as f32 / scale_x).powi(2) + (dy as f32 / scale_y).powi(2)).sqrt();
+                        let dist =
+                            ((dx as f32 / scale_x).powi(2) + (dy as f32 / scale_y).powi(2)).sqrt();
                         min_dist = min_dist.min(dist);
                     }
                 }
             }
-            
+
             let signed_dist = if is_inside { min_dist } else { -min_dist };
-            
+
             let normalized = (signed_dist / range + 1.0) * 0.5;
             let base_value = normalized.clamp(0.0, 1.0);
-            
+
             let offset = 0.03;
             let r = (base_value + offset * (1.0 - base_value.abs())).clamp(0.0, 1.0);
             let g = base_value;
             let b = (base_value - offset * (1.0 - base_value.abs())).clamp(0.0, 1.0);
-            
+
             let idx = (y * msdf_width + x) as usize * 3;
             msdf[idx] = (r * 255.0) as u8;
             msdf[idx + 1] = (g * 255.0) as u8;
             msdf[idx + 2] = (b * 255.0) as u8;
         }
     }
-    
+
     msdf
 }
 
 impl TextRenderer {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, fmt: wgpu::TextureFormat,
-               canvas_bind_group_layout: &wgpu::BindGroupLayout,
-               ui_screen_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        fmt: wgpu::TextureFormat,
+        canvas_bind_group_layout: &wgpu::BindGroupLayout,
+        ui_screen_bind_group_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("msdf atlas"),
             size: wgpu::Extent3d {
@@ -205,7 +219,7 @@ impl TextRenderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm, 
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -289,7 +303,9 @@ impl TextRenderer {
 
         let screen_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("screen-text shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../data/shaders/screen_text_shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../data/shaders/screen_text_shader.wgsl").into(),
+            ),
         });
         let screen_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("screen-text-pl"),
@@ -323,8 +339,7 @@ impl TextRenderer {
         });
 
         Self {
-            font: FontArc::try_from_slice(include_bytes!("../data/fonts/Virgil.ttf"))
-                .unwrap(),
+            font: FontArc::try_from_slice(include_bytes!("../data/fonts/Virgil.ttf")).unwrap(),
             tex,
             view,
             sampler,
@@ -400,10 +415,10 @@ impl TextRenderer {
                 let mut rgba_data = Vec::with_capacity((atlas_w * atlas_h * 4) as usize);
                 for i in 0..(atlas_w * atlas_h) as usize {
                     if i < msdf_data.len() / 3 {
-                        rgba_data.push(msdf_data[i * 3]);     // R
+                        rgba_data.push(msdf_data[i * 3]); // R
                         rgba_data.push(msdf_data[i * 3 + 1]); // G
                         rgba_data.push(msdf_data[i * 3 + 2]); // B
-                        rgba_data.push(255);                  // A
+                        rgba_data.push(255); // A
                     } else {
                         rgba_data.extend_from_slice(&[0, 0, 0, 0]);
                     }
@@ -434,7 +449,10 @@ impl TextRenderer {
                 );
 
                 let info = GlyphInfo {
-                    uv_min: [self.next_x as f32 / ATLAS_SIZE as f32, self.next_y as f32 / ATLAS_SIZE as f32],
+                    uv_min: [
+                        self.next_x as f32 / ATLAS_SIZE as f32,
+                        self.next_y as f32 / ATLAS_SIZE as f32,
+                    ],
                     uv_max: [
                         (self.next_x + atlas_w) as f32 / ATLAS_SIZE as f32,
                         (self.next_y + atlas_h) as f32 / ATLAS_SIZE as f32,
@@ -455,87 +473,186 @@ impl TextRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        elems: &[DrawingElement],
+        elems: &[Element],
         viewport: (f32, f32),
     ) {
         self.vertices.clear();
         self.indices.clear();
         let mut off: u16 = 0;
         for e in elems {
-            if let DrawingElement::Text {
-                position,
-                content,
-                color,
-                size,
-            } = e
-            {
-                let px = *size;
-                let mut pen_x = position[0];
-                let scale = ab_glyph::PxScale::from(px);
-                let mut prev_gid: Option<ab_glyph::GlyphId> = None;
+            match &e.shape {
+                DrawingElement::Text {
+                    position,
+                    content,
+                    color,
+                    size,
+                } => {
+                    let px = *size;
+                    let mut pen_x = position[0];
+                    let mut pen_y = position[1];
+                    let scale = ab_glyph::PxScale::from(px);
+                    let mut prev_gid: Option<ab_glyph::GlyphId> = None;
 
-                for ch in content.chars() {
-                    let gid = self.font.glyph_id(ch);
+                    for ch in content.chars() {
+                        if ch == '\n' {
+                            pen_x = position[0];
+                            pen_y += px * 1.2;
+                            prev_gid = None;
+                            continue;
+                        }
 
-                    if let Some(prev) = prev_gid {
-                        let kern_px = self.font.as_scaled(scale).kern(prev, gid);
-                        pen_x += kern_px;
-                    }
+                        let gid = self.font.glyph_id(ch);
 
-                    let info = {
-                        let info_ref = self.cache_glyph(device, queue, gid);
-                        *info_ref
-                    };
+                        if let Some(prev) = prev_gid {
+                            let kern_px = self.font.as_scaled(scale).kern(prev, gid);
+                            pen_x += kern_px;
+                        }
 
-                    let adv_px = self.font.as_scaled(scale).h_advance(gid);
+                        let info = {
+                            let info_ref = self.cache_glyph(device, queue, gid);
+                            *info_ref
+                        };
 
-                    if info.size[0] == 0.0 || info.size[1] == 0.0 {
+                        let adv_px = self.font.as_scaled(scale).h_advance(gid);
+
+                        if info.size[0] == 0.0 || info.size[1] == 0.0 {
+                            pen_x += adv_px;
+                            prev_gid = Some(gid);
+                            continue;
+                        }
+
+                        let scale_factor = px / MSDF_BASE_SIZE;
+                        let scaled_size =
+                            [info.size[0] * scale_factor, info.size[1] * scale_factor];
+                        let scaled_bearing = [
+                            info.bearing[0] * scale_factor,
+                            info.bearing[1] * scale_factor,
+                        ];
+
+                        let x0 = pen_x + scaled_bearing[0];
+                        let y0 = pen_y + scaled_bearing[1];
+                        let x1 = x0 + scaled_size[0];
+                        let y1 = y0 + scaled_size[1];
+
+                        let [u0, v0] = info.uv_min;
+                        let [u1, v1] = info.uv_max;
+
+                        self.vertices.extend_from_slice(&[
+                            TextVertex {
+                                pos: [x0, y0],
+                                uv: [u0, v0],
+                                color: *color,
+                            },
+                            TextVertex {
+                                pos: [x1, y0],
+                                uv: [u1, v0],
+                                color: *color,
+                            },
+                            TextVertex {
+                                pos: [x1, y1],
+                                uv: [u1, v1],
+                                color: *color,
+                            },
+                            TextVertex {
+                                pos: [x0, y1],
+                                uv: [u0, v1],
+                                color: *color,
+                            },
+                        ]);
+                        self.indices.extend_from_slice(&[
+                            off,
+                            off + 1,
+                            off + 2,
+                            off,
+                            off + 2,
+                            off + 3,
+                        ]);
+                        off += 4;
+
                         pen_x += adv_px;
                         prev_gid = Some(gid);
-                        continue;
                     }
-
-                    let scale_factor = px / MSDF_BASE_SIZE;
-                    let scaled_size = [info.size[0] * scale_factor, info.size[1] * scale_factor];
-                    let scaled_bearing = [info.bearing[0] * scale_factor, info.bearing[1] * scale_factor];
-
-                    let x0 = pen_x + scaled_bearing[0];
-                    let y0 = position[1] + scaled_bearing[1];
-                    let x1 = x0 + scaled_size[0];
-                    let y1 = y0 + scaled_size[1];
-
-                    let [u0, v0] = info.uv_min;
-                    let [u1, v1] = info.uv_max;
-
-                    self.vertices.extend_from_slice(&[
-                        TextVertex {
-                            pos: [x0, y0],
-                            uv: [u0, v0],
-                            color: *color,
-                        },
-                        TextVertex {
-                            pos: [x1, y0],
-                            uv: [u1, v0],
-                            color: *color,
-                        },
-                        TextVertex {
-                            pos: [x1, y1],
-                            uv: [u1, v1],
-                            color: *color,
-                        },
-                        TextVertex {
-                            pos: [x0, y1],
-                            uv: [u0, v1],
-                            color: *color,
-                        },
-                    ]);
-                    self.indices
-                        .extend_from_slice(&[off, off + 1, off + 2, off, off + 2, off + 3]);
-                    off += 4;
-
-                    pen_x += adv_px;
-                    prev_gid = Some(gid);
                 }
+                DrawingElement::TextBox {
+                    pos,
+                    content,
+                    color,
+                    font_size,
+                    ..
+                } => {
+                    let px = *font_size;
+                    let line_height = px * 1.2;
+                    for (line_index, line) in content.lines().enumerate() {
+                        let mut pen_x = pos[0] + 8.0;
+                        let pen_y = pos[1] + px + 4.0 + line_index as f32 * line_height;
+                        let scale = ab_glyph::PxScale::from(px);
+                        let mut prev_gid: Option<ab_glyph::GlyphId> = None;
+                        for ch in line.chars() {
+                            let gid = self.font.glyph_id(ch);
+                            if let Some(prev) = prev_gid {
+                                let kern_px = self.font.as_scaled(scale).kern(prev, gid);
+                                pen_x += kern_px;
+                            }
+                            let info = {
+                                let info_ref = self.cache_glyph(device, queue, gid);
+                                *info_ref
+                            };
+                            let adv_px = self.font.as_scaled(scale).h_advance(gid);
+                            if info.size[0] == 0.0 || info.size[1] == 0.0 {
+                                pen_x += adv_px;
+                                prev_gid = Some(gid);
+                                continue;
+                            }
+                            let scale_factor = px / MSDF_BASE_SIZE;
+                            let scaled_size =
+                                [info.size[0] * scale_factor, info.size[1] * scale_factor];
+                            let scaled_bearing = [
+                                info.bearing[0] * scale_factor,
+                                info.bearing[1] * scale_factor,
+                            ];
+                            let x0 = pen_x + scaled_bearing[0];
+                            let y0 = pen_y + scaled_bearing[1];
+                            let x1 = x0 + scaled_size[0];
+                            let y1 = y0 + scaled_size[1];
+                            let [u0, v0] = info.uv_min;
+                            let [u1, v1] = info.uv_max;
+                            self.vertices.extend_from_slice(&[
+                                TextVertex {
+                                    pos: [x0, y0],
+                                    uv: [u0, v0],
+                                    color: *color,
+                                },
+                                TextVertex {
+                                    pos: [x1, y0],
+                                    uv: [u1, v0],
+                                    color: *color,
+                                },
+                                TextVertex {
+                                    pos: [x1, y1],
+                                    uv: [u1, v1],
+                                    color: *color,
+                                },
+                                TextVertex {
+                                    pos: [x0, y1],
+                                    uv: [u0, v1],
+                                    color: *color,
+                                },
+                            ]);
+                            self.indices.extend_from_slice(&[
+                                off,
+                                off + 1,
+                                off + 2,
+                                off,
+                                off + 2,
+                                off + 3,
+                            ]);
+                            off += 4;
+                            pen_x += adv_px;
+                            prev_gid = Some(gid);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         if !self.vertices.is_empty() {
@@ -559,7 +676,13 @@ impl TextRenderer {
         }
     }
 
-    pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, canvas_bind_group: &wgpu::BindGroup, ui_screen_bind_group: &wgpu::BindGroup) {
+    pub fn draw(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        canvas_bind_group: &wgpu::BindGroup,
+        ui_screen_bind_group: &wgpu::BindGroup,
+    ) {
         if self.vbuf.is_some() || self.screen_vbuf.is_some() {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("text pass"),
@@ -594,17 +717,18 @@ impl TextRenderer {
         self.screen_indices.clear();
     }
 
-    pub fn add_screen_label(&mut self,
-        device:&wgpu::Device,
-        queue:&wgpu::Queue,
-        text:&str,
-        pos_screen:[f32;2],
-        px:f32,
-        color:[f32;4]) {
-
+    pub fn add_screen_label(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        text: &str,
+        pos_screen: [f32; 2],
+        px: f32,
+        color: [f32; 4],
+    ) {
         let mut pen_x = pos_screen[0];
         let scale = ab_glyph::PxScale::from(px);
-        let mut prev_gid: Option<ab_glyph::GlyphId>=None;
+        let mut prev_gid: Option<ab_glyph::GlyphId> = None;
         let mut off: u16 = self.screen_vertices.len() as u16;
 
         for ch in text.chars() {
@@ -613,49 +737,86 @@ impl TextRenderer {
                 let kern = self.font.as_scaled(scale).kern(prev, gid);
                 pen_x += kern;
             }
-            let info = {*self.cache_glyph(device, queue, gid)};
+            let info = { *self.cache_glyph(device, queue, gid) };
             let adv = self.font.as_scaled(scale).h_advance(gid);
-            if info.size[0]==0.0 || info.size[1]==0.0 {pen_x += adv; prev_gid=Some(gid); continue;}
-            
+            if info.size[0] == 0.0 || info.size[1] == 0.0 {
+                pen_x += adv;
+                prev_gid = Some(gid);
+                continue;
+            }
+
             let scale_factor = px / MSDF_BASE_SIZE;
             let scaled_size = [info.size[0] * scale_factor, info.size[1] * scale_factor];
-            let scaled_bearing = [info.bearing[0] * scale_factor, info.bearing[1] * scale_factor];
-            
+            let scaled_bearing = [
+                info.bearing[0] * scale_factor,
+                info.bearing[1] * scale_factor,
+            ];
+
             let x0 = pen_x + scaled_bearing[0];
             let y0 = pos_screen[1] + scaled_bearing[1];
             let x1 = x0 + scaled_size[0];
             let y1 = y0 + scaled_size[1];
-            let [u0,v0]=info.uv_min; let [u1,v1]=info.uv_max;
+            let [u0, v0] = info.uv_min;
+            let [u1, v1] = info.uv_max;
             self.screen_vertices.extend_from_slice(&[
-                TextVertex{pos:[x0,y0],uv:[u0,v0],color},
-                TextVertex{pos:[x1,y0],uv:[u1,v0],color},
-                TextVertex{pos:[x1,y1],uv:[u1,v1],color},
-                TextVertex{pos:[x0,y1],uv:[u0,v1],color},
+                TextVertex {
+                    pos: [x0, y0],
+                    uv: [u0, v0],
+                    color,
+                },
+                TextVertex {
+                    pos: [x1, y0],
+                    uv: [u1, v0],
+                    color,
+                },
+                TextVertex {
+                    pos: [x1, y1],
+                    uv: [u1, v1],
+                    color,
+                },
+                TextVertex {
+                    pos: [x0, y1],
+                    uv: [u0, v1],
+                    color,
+                },
             ]);
-            self.screen_indices.extend_from_slice(&[off,off+1,off+2,off,off+2,off+3]);
+            self.screen_indices
+                .extend_from_slice(&[off, off + 1, off + 2, off, off + 2, off + 3]);
             off += 4;
             pen_x += adv;
-            prev_gid=Some(gid);
+            prev_gid = Some(gid);
         }
     }
 
     pub fn build_screen_buffers(&mut self, device: &wgpu::Device) {
         if !self.screen_vertices.is_empty() {
-            self.screen_vbuf = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("screen-text vbuf"),
-                contents: bytemuck::cast_slice(&self.screen_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            }));
-            self.screen_ibuf = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("screen-text ibuf"),
-                contents: bytemuck::cast_slice(&self.screen_indices),
-                usage: wgpu::BufferUsages::INDEX,
-            }));
+            self.screen_vbuf = Some(
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("screen-text vbuf"),
+                    contents: bytemuck::cast_slice(&self.screen_vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }),
+            );
+            self.screen_ibuf = Some(
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("screen-text ibuf"),
+                    contents: bytemuck::cast_slice(&self.screen_indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                }),
+            );
         }
     }
 
-    pub fn draw_screen(&self, rp:&mut wgpu::RenderPass<'_>, ui_screen_bind_group:&wgpu::BindGroup) {
-        if let (Some(pipe), Some(vb), Some(ib)) = (self.screen_pipeline.as_ref(), &self.screen_vbuf, &self.screen_ibuf) {
+    pub fn draw_screen(
+        &self,
+        rp: &mut wgpu::RenderPass<'_>,
+        ui_screen_bind_group: &wgpu::BindGroup,
+    ) {
+        if let (Some(pipe), Some(vb), Some(ib)) = (
+            self.screen_pipeline.as_ref(),
+            &self.screen_vbuf,
+            &self.screen_ibuf,
+        ) {
             rp.set_pipeline(pipe);
             rp.set_bind_group(0, ui_screen_bind_group, &[]);
             rp.set_bind_group(1, &self.bind_group, &[]);

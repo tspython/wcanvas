@@ -1,9 +1,10 @@
 use crate::canvas::{CanvasTransform, Uniforms};
 use crate::document::Document;
-use crate::drawing::{DrawingElement, Tool};
+use crate::drawing::{Element, ElementId, Tool, sync_id_counters};
+use crate::history::{Action, History};
 use crate::state::{
-    Canvas, GeometryBuffers, GpuContext, InputState, SdfBuffers, TextInput, UiBuffers,
-    UiScreenBuffers, UiScreenUniforms, UserInputState::Idle,
+    Canvas, ColorPickerState, GeometryBuffers, GpuContext, InputState, SdfBuffers, SelectionState,
+    TextInput, UiBuffers, UiScreenBuffers, UiScreenUniforms, UserInputState::Idle,
 };
 use crate::text_renderer::TextRenderer;
 use crate::ui::UiRenderer;
@@ -33,11 +34,13 @@ pub struct State {
     pub input: InputState,
     pub typing: TextInput,
 
-    pub elements: Vec<DrawingElement>,
-    pub redo_stack: Vec<DrawingElement>,
+    pub elements: Vec<Element>,
+    pub history: History,
     pub current_tool: Tool,
     pub current_color: [f32; 4],
+    pub color_picker: ColorPickerState,
     pub stroke_width: f32,
+    pub clipboard: Vec<Element>,
 
     pub ui_renderer: UiRenderer,
     pub text_renderer: TextRenderer,
@@ -52,7 +55,7 @@ pub struct State {
 impl State {
     pub async fn new(window: Arc<Window>) -> State {
         let mut size = window.inner_size();
-        
+
         #[cfg(target_arch = "wasm32")]
         {
             if size.width == 0 || size.height == 0 {
@@ -248,9 +251,7 @@ impl State {
 
         let ui_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("UI Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../data/shaders/ui_shader.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../data/shaders/ui_shader.wgsl").into()),
         });
 
         let ui_uniform_bind_group_layout =
@@ -357,8 +358,8 @@ impl State {
             pan_start: None,
             current_stroke: Vec::new(),
             drag_start: None,
-            selected_element: None,
-            element_start_pos: None,
+            transform_snapshot: Vec::new(),
+            selection: SelectionState::new(),
             preview_element: None,
         };
 
@@ -366,23 +367,33 @@ impl State {
             active: false,
             buffer: String::new(),
             pos_canvas: [0.0; 2],
+            editing_id: None,
+            cursor_pos: 0,
             cursor_visible: false,
             blink_timer: Instant::now(),
         };
 
         let ui_renderer = UiRenderer::new();
-        let text_renderer = TextRenderer::new(&gpu.device, &gpu.queue, surface_format, &uniform_bind_group_layout, &ui_uniform_bind_group_layout);
+        let text_renderer = TextRenderer::new(
+            &gpu.device,
+            &gpu.queue,
+            surface_format,
+            &uniform_bind_group_layout,
+            &ui_uniform_bind_group_layout,
+        );
 
         let ui_screen_uniforms = UiScreenUniforms {
             screen_size: [size.width as f32, size.height as f32],
             _padding: [0.0, 0.0],
         };
 
-        let ui_screen_uniform_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("UI Screen Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[ui_screen_uniforms]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let ui_screen_uniform_buffer =
+            gpu.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("UI Screen Uniform Buffer"),
+                    contents: bytemuck::cast_slice(&[ui_screen_uniforms]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
         let ui_screen_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &ui_uniform_bind_group_layout,
@@ -409,10 +420,12 @@ impl State {
             input,
             typing,
             elements: Vec::new(),
-            redo_stack: Vec::new(),
+            history: History::default(),
             current_tool: Tool::Pen,
-            current_color: [0.0, 0.0, 0.0, 1.0], 
+            current_color: [0.0, 0.0, 0.0, 1.0],
+            color_picker: ColorPickerState::new(),
             stroke_width: 2.0,
+            clipboard: Vec::new(),
             ui_renderer,
             text_renderer,
             ui_screen,
@@ -438,7 +451,9 @@ impl State {
     /// Load a Document into the current state.
     pub fn load_document(&mut self, doc: Document) {
         self.elements = doc.elements;
-        self.redo_stack.clear();
+        sync_id_counters(&self.elements);
+        self.history.clear();
+        self.input.selection.clear();
         self.canvas.transform.offset = doc.canvas_view.offset;
         self.canvas.transform.scale = doc.canvas_view.zoom;
         self.document_name = doc.name;
@@ -453,6 +468,7 @@ impl State {
             0,
             bytemuck::cast_slice(&[self.canvas.uniform]),
         );
+        self.sync_picker_to_color(self.current_color);
     }
 
     /// Save to the current file path or show Save As dialog (native only).
@@ -569,4 +585,226 @@ impl State {
             }
         }
     }
-} 
+
+    pub fn find_index_by_id(&self, id: ElementId) -> Option<usize> {
+        self.elements.iter().position(|element| element.id == id)
+    }
+
+    pub fn find_element_by_id(&self, id: ElementId) -> Option<&Element> {
+        self.elements.iter().find(|element| element.id == id)
+    }
+
+    pub fn find_element_mut_by_id(&mut self, id: ElementId) -> Option<&mut Element> {
+        self.elements.iter_mut().find(|element| element.id == id)
+    }
+
+    pub fn snapshot_elements(&self, ids: &[ElementId]) -> Vec<Element> {
+        ids.iter()
+            .filter_map(|id| self.find_element_by_id(*id).cloned())
+            .collect()
+    }
+
+    pub fn set_selection(&mut self, ids: Vec<ElementId>) {
+        self.input.selection.selected_ids = ids;
+    }
+
+    pub fn normalize_selection(&mut self) {
+        let existing_ids: std::collections::HashSet<_> =
+            self.elements.iter().map(|element| element.id).collect();
+        self.input
+            .selection
+            .selected_ids
+            .retain(|id| existing_ids.contains(id));
+    }
+
+    pub fn apply_and_record(&mut self, action: Action) {
+        self.apply_action(&action, true);
+        self.history.push(action);
+        self.normalize_selection();
+        self.autosave_if_possible();
+    }
+
+    pub fn record_action(&mut self, action: Action) {
+        self.history.push(action);
+        self.normalize_selection();
+        self.autosave_if_possible();
+    }
+
+    pub fn undo(&mut self) {
+        if let Some(action) = self.history.undo_stack.pop() {
+            self.apply_action(&action, false);
+            self.history.redo_stack.push(action);
+            self.normalize_selection();
+            self.autosave_if_possible();
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Some(action) = self.history.redo_stack.pop() {
+            self.apply_action(&action, true);
+            self.history.undo_stack.push(action);
+            self.normalize_selection();
+            self.autosave_if_possible();
+        }
+    }
+
+    fn apply_action(&mut self, action: &Action, forward: bool) {
+        match action {
+            Action::Add { elements } => {
+                if forward {
+                    self.insert_elements(elements.iter().cloned().collect());
+                } else {
+                    self.remove_ids(
+                        &elements
+                            .iter()
+                            .map(|(_, element)| element.id)
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+            Action::Remove { elements } => {
+                if forward {
+                    self.remove_ids(
+                        &elements
+                            .iter()
+                            .map(|(_, element)| element.id)
+                            .collect::<Vec<_>>(),
+                    );
+                } else {
+                    self.insert_elements(elements.iter().cloned().collect());
+                }
+            }
+            Action::Move { before, after } | Action::ModifyProperty { before, after } => {
+                let source = if forward { after } else { before };
+                for element in source {
+                    if let Some(index) = self.find_index_by_id(element.id) {
+                        self.elements[index] = element.clone();
+                    }
+                }
+            }
+            Action::Reorder { before, after } => {
+                let order = if forward { after } else { before };
+                self.reorder_by_ids(order);
+            }
+            Action::Batch(actions) => {
+                if forward {
+                    for nested in actions {
+                        self.apply_action(nested, true);
+                    }
+                } else {
+                    for nested in actions.iter().rev() {
+                        self.apply_action(nested, false);
+                    }
+                }
+            }
+        }
+    }
+
+    fn insert_elements(&mut self, mut entries: Vec<(usize, Element)>) {
+        entries.sort_by_key(|(index, _)| *index);
+        for (index, element) in entries {
+            let insert_index = index.min(self.elements.len());
+            self.elements.insert(insert_index, element);
+        }
+    }
+
+    fn remove_ids(&mut self, ids: &[ElementId]) {
+        self.elements.retain(|element| !ids.contains(&element.id));
+        self.input
+            .selection
+            .selected_ids
+            .retain(|id| !ids.contains(id));
+    }
+
+    fn reorder_by_ids(&mut self, order: &[ElementId]) {
+        let mut reordered = Vec::with_capacity(self.elements.len());
+        for id in order {
+            if let Some(index) = self.find_index_by_id(*id) {
+                reordered.push(self.elements[index].clone());
+            }
+        }
+        self.elements = reordered;
+    }
+
+    fn autosave_if_possible(&self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.save_to_storage();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Ok(path) = crate::platform::autosave_path() {
+                let doc = self.to_document();
+                if let Ok(json) = doc.to_json() {
+                    if let Err(e) =
+                        crate::platform::save_to_file(path.to_str().unwrap_or(""), &json)
+                    {
+                        log::warn!("Autosave failed: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn sync_picker_to_color(&mut self, color: [f32; 4]) {
+        let (h, s, v) = rgb_to_hsv(color);
+        self.color_picker.hue = h;
+        self.color_picker.saturation = s;
+        self.color_picker.value = v;
+    }
+
+    pub fn picker_color(&self) -> [f32; 4] {
+        hsv_to_rgb(
+            self.color_picker.hue,
+            self.color_picker.saturation,
+            self.color_picker.value,
+        )
+    }
+}
+
+fn rgb_to_hsv(color: [f32; 4]) -> (f32, f32, f32) {
+    let r = color[0];
+    let g = color[1];
+    let b = color[2];
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+
+    let hue = if delta <= f32::EPSILON {
+        0.0
+    } else if (max - r).abs() <= f32::EPSILON {
+        60.0 * ((g - b) / delta).rem_euclid(6.0)
+    } else if (max - g).abs() <= f32::EPSILON {
+        60.0 * (((b - r) / delta) + 2.0)
+    } else {
+        60.0 * (((r - g) / delta) + 4.0)
+    };
+
+    let saturation = if max <= f32::EPSILON {
+        0.0
+    } else {
+        delta / max
+    };
+    (hue, saturation, max)
+}
+
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 4] {
+    let c = v * s;
+    let hue_sector = (h / 60.0).rem_euclid(6.0);
+    let x = c * (1.0 - ((hue_sector.rem_euclid(2.0)) - 1.0).abs());
+    let (r1, g1, b1) = if hue_sector < 1.0 {
+        (c, x, 0.0)
+    } else if hue_sector < 2.0 {
+        (x, c, 0.0)
+    } else if hue_sector < 3.0 {
+        (0.0, c, x)
+    } else if hue_sector < 4.0 {
+        (0.0, x, c)
+    } else if hue_sector < 5.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    let m = v - c;
+    [r1 + m, g1 + m, b1 + m, 1.0]
+}

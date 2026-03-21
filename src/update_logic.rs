@@ -1,9 +1,10 @@
 use crate::app_state::State;
-use crate::drawing::DrawingElement;
+use crate::drawing::{DrawingElement, Element, ElementId};
+use crate::state::ResizeHandle;
 use crate::vector::path::Path;
+use crate::vector::sdf::SdfBatch;
 use crate::vector::style::StrokeStyle;
 use crate::vector::tessellator::PathTessellator;
-use crate::vector::sdf::SdfBatch;
 use wgpu::util::DeviceExt;
 
 impl State {
@@ -26,6 +27,7 @@ impl State {
         let (ui_vertices, ui_indices) = self.ui_renderer.generate_ui_vertices(
             self.current_tool,
             self.current_color,
+            &self.color_picker,
             (self.size.width as f32, self.size.height as f32),
             self.canvas.transform.scale,
         );
@@ -53,7 +55,11 @@ impl State {
         let mut drawing_elements = self.elements.clone();
 
         if let Some(preview) = &self.input.preview_element {
-            drawing_elements.push(preview.clone());
+            drawing_elements.push(Element {
+                id: ElementId(0),
+                group_id: None,
+                shape: preview.clone(),
+            });
         }
 
         if self.typing.active {
@@ -61,11 +67,27 @@ impl State {
             if self.typing.cursor_visible {
                 display_text.push('|');
             }
-            drawing_elements.push(DrawingElement::Text {
-                position: self.typing.pos_canvas,
-                content: display_text,
-                color: self.current_color,
-                size: 32.0,
+            drawing_elements.push(Element {
+                id: ElementId(0),
+                group_id: None,
+                shape: DrawingElement::TextBox {
+                    id: self.typing.editing_id.map(|id| id.0).unwrap_or(0),
+                    pos: self.typing.pos_canvas,
+                    size: [
+                        display_text
+                            .lines()
+                            .map(|line| line.chars().count())
+                            .max()
+                            .unwrap_or(1) as f32
+                            * 19.2
+                            + 16.0,
+                        display_text.lines().count() as f32 * 38.0 + 16.0,
+                    ],
+                    content: display_text,
+                    color: self.current_color,
+                    font_size: 32.0,
+                    state: crate::drawing::BoxState::Editing,
+                },
             });
         }
 
@@ -79,13 +101,15 @@ impl State {
         self.text_renderer.clear_screen();
         let zoom_percent = (self.canvas.transform.scale * 100.0) as i32;
         let zoom_text = format!("{}%", zoom_percent);
-        let screen_pos = [25.0, self.size.height as f32 - 25.0];
+        let (screen_pos, font_size) = self
+            .ui_renderer
+            .zoom_label_layout((self.size.width as f32, self.size.height as f32));
         self.text_renderer.add_screen_label(
             &self.gpu.device,
             &self.gpu.queue,
             &zoom_text,
             screen_pos,
-            14.0,
+            font_size,
             [1.0, 1.0, 1.0, 1.0],
         );
 
@@ -98,18 +122,27 @@ impl State {
 
         let mut all_elements = self.elements.clone();
         if let Some(preview) = &self.input.preview_element {
-            all_elements.push(preview.clone());
+            all_elements.push(Element {
+                id: ElementId(0),
+                group_id: None,
+                shape: preview.clone(),
+            });
         }
 
         for element in all_elements.iter() {
-            Self::tessellate_element(element, &mut tess, &mut sdf_batch);
+            Self::tessellate_element(&element.shape, &mut tess, &mut sdf_batch);
         }
 
-        // Selection highlight
-        if let Some(selected_idx) = self.input.selected_element {
-            if let Some(element) = self.elements.get(selected_idx) {
-                Self::tessellate_selection_highlight(element, &mut tess);
-            }
+        if let Some(bounds) = selection_bounds(&self.elements, &self.input.selection.selected_ids) {
+            Self::tessellate_selection_highlight(bounds, &mut tess);
+            Self::tessellate_resize_handles(bounds, &mut tess);
+        }
+
+        if let (Some(start), Some(current)) = (
+            self.input.selection.marquee_start,
+            self.input.selection.marquee_current,
+        ) {
+            Self::tessellate_marquee(start, current, &mut tess);
         }
 
         // Active pen stroke
@@ -177,12 +210,23 @@ impl State {
         sdf_batch: &mut SdfBatch,
     ) {
         match element {
-            DrawingElement::Stroke { points, color, width } => {
+            DrawingElement::Stroke {
+                points,
+                color,
+                width,
+            } => {
                 let path = Path::from_points(points);
                 tess.stroke(&path, &StrokeStyle::new(*color, *width));
             }
 
-            DrawingElement::Rectangle { position, size, color, fill, stroke_width, rough_style } => {
+            DrawingElement::Rectangle {
+                position,
+                size,
+                color,
+                fill,
+                stroke_width,
+                rough_style,
+            } => {
                 if let Some(rough_options) = rough_style {
                     // Rough style: tessellate the rough path segments
                     let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
@@ -198,11 +242,19 @@ impl State {
                 }
             }
 
-            DrawingElement::Circle { center, radius, color, fill, stroke_width, rough_style } => {
+            DrawingElement::Circle {
+                center,
+                radius,
+                color,
+                fill,
+                stroke_width,
+                rough_style,
+            } => {
                 if let Some(rough_options) = rough_style {
                     let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                     let diameter = *radius * 2.0;
-                    let rough_lines = generator.rough_ellipse(*center, diameter, diameter, rough_options);
+                    let rough_lines =
+                        generator.rough_ellipse(*center, diameter, diameter, rough_options);
                     let style = StrokeStyle::new(*color, rough_options.stroke_width);
                     for line_points in rough_lines {
                         let path = Path::from_points(&line_points);
@@ -214,7 +266,14 @@ impl State {
                 }
             }
 
-            DrawingElement::Diamond { position, size, color, fill, stroke_width, rough_style } => {
+            DrawingElement::Diamond {
+                position,
+                size,
+                color,
+                fill,
+                stroke_width,
+                rough_style,
+            } => {
                 if let Some(rough_options) = rough_style {
                     let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                     let rough_lines = generator.rough_diamond(*position, *size, rough_options);
@@ -229,7 +288,13 @@ impl State {
                 }
             }
 
-            DrawingElement::Arrow { start, end, color, width, rough_style } => {
+            DrawingElement::Arrow {
+                start,
+                end,
+                color,
+                width,
+                rough_style,
+            } => {
                 if let Some(rough_options) = rough_style {
                     let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                     let rough_lines = generator.rough_arrow(*start, *end, rough_options);
@@ -247,7 +312,13 @@ impl State {
                 }
             }
 
-            DrawingElement::Line { start, end, color, width, rough_style } => {
+            DrawingElement::Line {
+                start,
+                end,
+                color,
+                width,
+                rough_style,
+            } => {
                 if let Some(rough_options) = rough_style {
                     let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                     let rough_line = generator.rough_line(*start, *end, rough_options);
@@ -273,53 +344,40 @@ impl State {
     }
 
     /// Generate selection highlight geometry using the PathTessellator.
-    fn tessellate_selection_highlight(element: &DrawingElement, tess: &mut PathTessellator) {
+    fn tessellate_selection_highlight(bounds: ([f32; 2], [f32; 2]), tess: &mut PathTessellator) {
         let style = StrokeStyle::new([0.0, 0.5, 1.0, 0.8], 3.0);
+        let margin = 6.0;
+        let min = [bounds.0[0] - margin, bounds.0[1] - margin];
+        let max = [bounds.1[0] + margin, bounds.1[1] + margin];
+        let path = Path::rect(min, [max[0] - min[0], max[1] - min[1]]);
+        tess.stroke(&path, &style);
+    }
 
-        match element {
-            DrawingElement::Text { position, .. } => {
-                let path = Path::circle(*position, 30.0, 16);
-                tess.stroke(&path, &style);
-            }
-            DrawingElement::TextBox { pos, size, .. } => {
-                let margin = 5.0;
-                let path = Path::rect(
-                    [pos[0] - margin, pos[1] - margin],
-                    [size[0] + margin * 2.0, size[1] + margin * 2.0],
-                );
-                tess.stroke(&path, &style);
-            }
-            DrawingElement::Rectangle { position, size, .. } => {
-                let margin = 5.0;
-                let path = Path::rect(
-                    [position[0] - margin, position[1] - margin],
-                    [size[0] + margin * 2.0, size[1] + margin * 2.0],
-                );
-                tess.stroke(&path, &style);
-            }
-            DrawingElement::Circle { center, radius, .. } => {
-                let path = Path::circle(*center, radius + 10.0, 32);
-                tess.stroke(&path, &style);
-            }
-            DrawingElement::Diamond { position, size, .. } => {
-                let margin = 5.0;
-                let path = Path::diamond(
-                    [position[0] - margin, position[1] - margin],
-                    [size[0] + margin * 2.0, size[1] + margin * 2.0],
-                );
-                tess.stroke(&path, &style);
-            }
-            DrawingElement::Arrow { start, end, .. } | DrawingElement::Line { start, end, .. } => {
-                let expanded_style = StrokeStyle::new([0.0, 0.5, 1.0, 0.8], 6.0);
-                let path = Path::line(*start, *end);
-                tess.stroke(&path, &expanded_style);
-            }
-            DrawingElement::Stroke { points, .. } => {
-                let expanded_style = StrokeStyle::new([0.0, 0.5, 1.0, 0.8], 6.0);
-                let path = Path::from_points(points);
-                tess.stroke(&path, &expanded_style);
-            }
+    fn tessellate_resize_handles(bounds: ([f32; 2], [f32; 2]), tess: &mut PathTessellator) {
+        for handle_pos in handle_positions(bounds).values() {
+            let size = 10.0;
+            let path = Path::rect(
+                [handle_pos[0] - size * 0.5, handle_pos[1] - size * 0.5],
+                [size, size],
+            );
+            tess.fill_convex(
+                &[
+                    [handle_pos[0] - size * 0.5, handle_pos[1] - size * 0.5],
+                    [handle_pos[0] + size * 0.5, handle_pos[1] - size * 0.5],
+                    [handle_pos[0] + size * 0.5, handle_pos[1] + size * 0.5],
+                    [handle_pos[0] - size * 0.5, handle_pos[1] + size * 0.5],
+                ],
+                [1.0, 1.0, 1.0, 1.0],
+            );
+            tess.stroke(&path, &StrokeStyle::new([0.0, 0.5, 1.0, 1.0], 1.5));
         }
+    }
+
+    fn tessellate_marquee(start: [f32; 2], current: [f32; 2], tess: &mut PathTessellator) {
+        let position = [start[0].min(current[0]), start[1].min(current[1])];
+        let size = [(current[0] - start[0]).abs(), (current[1] - start[1]).abs()];
+        let path = Path::rect(position, size);
+        tess.stroke(&path, &StrokeStyle::new([0.0, 0.5, 1.0, 0.7], 1.5));
     }
 
     /// Tessellate the in-progress drawing (active pen stroke or arrow preview).
@@ -328,7 +386,10 @@ impl State {
             crate::drawing::Tool::Pen => {
                 if self.input.current_stroke.len() > 1 {
                     let path = Path::from_points(&self.input.current_stroke);
-                    tess.stroke(&path, &StrokeStyle::new(self.current_color, self.stroke_width));
+                    tess.stroke(
+                        &path,
+                        &StrokeStyle::new(self.current_color, self.stroke_width),
+                    );
                 }
             }
             crate::drawing::Tool::Arrow => {
@@ -344,4 +405,37 @@ impl State {
             _ => {}
         }
     }
+}
+
+fn selection_bounds(elements: &[Element], ids: &[ElementId]) -> Option<([f32; 2], [f32; 2])> {
+    let mut iter = elements.iter().filter(|element| ids.contains(&element.id));
+    let first = iter.next()?;
+    let (mut min, mut max) = first.bounding_box();
+    for element in iter {
+        let (element_min, element_max) = element.bounding_box();
+        min[0] = min[0].min(element_min[0]);
+        min[1] = min[1].min(element_min[1]);
+        max[0] = max[0].max(element_max[0]);
+        max[1] = max[1].max(element_max[1]);
+    }
+    Some((min, max))
+}
+
+pub fn handle_positions(
+    bounds: ([f32; 2], [f32; 2]),
+) -> std::collections::BTreeMap<ResizeHandle, [f32; 2]> {
+    let min = bounds.0;
+    let max = bounds.1;
+    let center_x = (min[0] + max[0]) * 0.5;
+    let center_y = (min[1] + max[1]) * 0.5;
+    std::collections::BTreeMap::from([
+        (ResizeHandle::NorthWest, [min[0], min[1]]),
+        (ResizeHandle::North, [center_x, min[1]]),
+        (ResizeHandle::NorthEast, [max[0], min[1]]),
+        (ResizeHandle::East, [max[0], center_y]),
+        (ResizeHandle::SouthEast, [max[0], max[1]]),
+        (ResizeHandle::South, [center_x, max[1]]),
+        (ResizeHandle::SouthWest, [min[0], max[1]]),
+        (ResizeHandle::West, [min[0], center_y]),
+    ])
 }
