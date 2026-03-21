@@ -284,7 +284,10 @@ impl State {
                     // Zoom toward mouse cursor
                     let zoom_factor = match delta {
                         MouseScrollDelta::LineDelta(_, y) => 1.0 + y * 0.1,
-                        MouseScrollDelta::PixelDelta(pos) => 1.0 + pos.y as f32 * 0.001,
+                        MouseScrollDelta::PixelDelta(pos) => {
+                            // Ctrl+PixelDelta from trackpad pinch-to-zoom
+                            1.0 + pos.y as f32 * 0.005
+                        }
                     };
 
                     let mouse_canvas_before =
@@ -468,6 +471,37 @@ impl State {
                 } else {
                     false
                 }
+            }
+            WindowEvent::PinchGesture { delta, .. } => {
+                // Native trackpad pinch-to-zoom (macOS, iOS).
+                // delta is a magnification factor: positive = zoom in, negative = zoom out.
+                let zoom_factor = 1.0 + *delta as f32;
+
+                let mouse_canvas_before =
+                    self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                self.canvas.transform.scale *= zoom_factor;
+                self.canvas.transform.scale = self.canvas.transform.scale.clamp(0.1, 10.0);
+                let mouse_canvas_after =
+                    self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+
+                self.canvas.transform.offset[0] += (mouse_canvas_after[0]
+                    - mouse_canvas_before[0])
+                    * self.canvas.transform.scale;
+                self.canvas.transform.offset[1] += (mouse_canvas_after[1]
+                    - mouse_canvas_before[1])
+                    * self.canvas.transform.scale;
+
+                self.canvas.uniform.update_transform(
+                    &self.canvas.transform,
+                    (self.size.width as f32, self.size.height as f32),
+                );
+                self.gpu.queue.write_buffer(
+                    &self.canvas.uniform_buffer,
+                    0,
+                    bytemuck::cast_slice(&[self.canvas.uniform]),
+                );
+
+                true
             }
             WindowEvent::Ime(ime) => {
                 if let winit::event::Ime::Commit(text) = ime {
