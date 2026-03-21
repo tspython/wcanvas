@@ -35,6 +35,7 @@ impl State {
                 timestamp_writes: None,
             });
 
+            // Pass 1: Tessellated geometry (rough shapes, strokes, selection highlights)
             render_pass.set_pipeline(&self.gpu.render_pipeline);
             render_pass.set_bind_group(0, &self.canvas.uniform_bind_group, &[]);
 
@@ -46,6 +47,19 @@ impl State {
                 render_pass.draw_indexed(0..self.geometry.count, 0, 0..1);
             }
 
+            // Pass 2: SDF vector shapes (clean geometric shapes — resolution-independent)
+            render_pass.set_pipeline(&self.gpu.sdf_render_pipeline);
+            render_pass.set_bind_group(0, &self.canvas.uniform_bind_group, &[]);
+
+            if let (Some(sdf_vertex_buffer), Some(sdf_index_buffer)) =
+                (&self.sdf_geo.vertex, &self.sdf_geo.index)
+            {
+                render_pass.set_vertex_buffer(0, sdf_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(sdf_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.sdf_geo.count, 0, 0..1);
+            }
+
+            // Pass 3: UI elements (toolbar, color palette)
             render_pass.set_pipeline(&self.gpu.ui_render_pipeline);
             render_pass.set_bind_group(0, &self.ui_screen.bind_group, &[]);
 
