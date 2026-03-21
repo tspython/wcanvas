@@ -76,6 +76,7 @@ impl State {
                                             color: self.current_color,
                                             size: 32.0,
                                         });
+                                        self.autosave();
                                     }
                                     self.typing.active = false;
                                     self.typing.buffer.clear();
@@ -167,6 +168,7 @@ impl State {
                                                 self.find_element_at_position(canvas_pos)
                                             {
                                                 self.elements.remove(element_index);
+                                                self.autosave();
                                                 return true;
                                             }
                                             return false;
@@ -369,6 +371,7 @@ impl State {
                                         size: 32.0,
                                     });
                                     self.redo_stack.clear();
+                                    self.autosave();
                                 }
                                 self.typing.active = false;
                                 self.typing.buffer.clear();
@@ -408,10 +411,38 @@ impl State {
                             self.current_tool = Tool::Eraser;
                             true
                         }
+                        KeyCode::KeyS => {
+                            if is_ctrl_or_cmd {
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    self.save();
+                                }
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    self.export_download();
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        KeyCode::KeyO => {
+                            if is_ctrl_or_cmd {
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    self.open();
+                                }
+                                // WASM: file open requires async, handled via UI button
+                                true
+                            } else {
+                                false
+                            }
+                        }
                         KeyCode::KeyY => {
                             if is_ctrl_or_cmd {
                                 if let Some(element) = self.redo_stack.pop() {
                                     self.elements.push(element);
+                                    self.autosave();
                                 }
                                 true
                             } else {
@@ -422,6 +453,7 @@ impl State {
                             if is_ctrl_or_cmd {
                                 if let Some(element) = self.elements.pop() {
                                     self.redo_stack.push(element);
+                                    self.autosave();
                                 }
                                 true
                             } else {
@@ -685,6 +717,7 @@ impl State {
         if let Some(element) = element {
             self.elements.push(element);
             self.redo_stack.clear();
+            self.autosave();
         }
 
         self.input.current_stroke.clear();
@@ -982,5 +1015,27 @@ impl State {
             }
         }
         None
+    }
+
+    /// Auto-save the current state. On WASM saves to localStorage, on native to autosave file.
+    fn autosave(&self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.save_to_storage();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Ok(path) = crate::platform::autosave_path() {
+                let doc = self.to_document();
+                if let Ok(json) = doc.to_json() {
+                    if let Err(e) = crate::platform::save_to_file(
+                        path.to_str().unwrap_or(""),
+                        &json,
+                    ) {
+                        log::warn!("Autosave failed: {}", e);
+                    }
+                }
+            }
+        }
     }
 }
