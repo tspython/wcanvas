@@ -263,22 +263,44 @@ impl State {
                 true
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let zoom_factor = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => 1.0 + y * 0.1,
-                    MouseScrollDelta::PixelDelta(pos) => 1.0 + pos.y as f32 * 0.001,
-                };
+                // Trackpads report PixelDelta for two-finger scroll and
+                // send Ctrl modifier for pinch-to-zoom gestures.
+                // Mouse wheels report LineDelta.
+                //
+                // Behavior:
+                //   PixelDelta without Ctrl → pan (trackpad scroll)
+                //   PixelDelta with Ctrl    → zoom (trackpad pinch)
+                //   LineDelta               → zoom (mouse wheel)
+                let is_trackpad_scroll = matches!(delta, MouseScrollDelta::PixelDelta(_))
+                    && !self.input.modifiers.control_key();
 
-                let mouse_canvas_before =
-                    self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-                self.canvas.transform.scale *= zoom_factor;
-                self.canvas.transform.scale = self.canvas.transform.scale.clamp(0.1, 10.0);
-                let mouse_canvas_after =
-                    self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                if is_trackpad_scroll {
+                    // Pan: apply pixel deltas directly to offset
+                    if let MouseScrollDelta::PixelDelta(pos) = delta {
+                        self.canvas.transform.offset[0] += pos.x as f32;
+                        self.canvas.transform.offset[1] += pos.y as f32;
+                    }
+                } else {
+                    // Zoom toward mouse cursor
+                    let zoom_factor = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => 1.0 + y * 0.1,
+                        MouseScrollDelta::PixelDelta(pos) => 1.0 + pos.y as f32 * 0.001,
+                    };
 
-                self.canvas.transform.offset[0] +=
-                    (mouse_canvas_after[0] - mouse_canvas_before[0]) * self.canvas.transform.scale;
-                self.canvas.transform.offset[1] +=
-                    (mouse_canvas_after[1] - mouse_canvas_before[1]) * self.canvas.transform.scale;
+                    let mouse_canvas_before =
+                        self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+                    self.canvas.transform.scale *= zoom_factor;
+                    self.canvas.transform.scale = self.canvas.transform.scale.clamp(0.1, 10.0);
+                    let mouse_canvas_after =
+                        self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+
+                    self.canvas.transform.offset[0] += (mouse_canvas_after[0]
+                        - mouse_canvas_before[0])
+                        * self.canvas.transform.scale;
+                    self.canvas.transform.offset[1] += (mouse_canvas_after[1]
+                        - mouse_canvas_before[1])
+                        * self.canvas.transform.scale;
+                }
 
                 self.canvas.uniform.update_transform(
                     &self.canvas.transform,
