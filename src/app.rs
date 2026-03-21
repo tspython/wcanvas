@@ -106,7 +106,35 @@ impl ApplicationHandler for App {
             }
 
             pollster::block_on(async {
-                self.state = Some(State::new(Arc::new(window)).await);
+                let mut state = State::new(Arc::new(window)).await;
+
+                // Auto-load previous session on WASM
+                #[cfg(target_arch = "wasm32")]
+                {
+                    state.load_from_storage();
+                }
+
+                // Auto-load from autosave on native
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if let Ok(path) = crate::platform::autosave_path() {
+                        if path.exists() {
+                            if let Ok(json) = std::fs::read_to_string(&path) {
+                                match crate::document::Document::from_json(&json) {
+                                    Ok(doc) => {
+                                        state.load_document(doc);
+                                        log::info!("Loaded autosave");
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Failed to load autosave: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                self.state = Some(state);
             });
         }
     }

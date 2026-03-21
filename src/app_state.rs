@@ -1,4 +1,5 @@
 use crate::canvas::{CanvasTransform, Uniforms};
+use crate::document::Document;
 use crate::drawing::{DrawingElement, Tool};
 use crate::state::{
     Canvas, GeometryBuffers, GpuContext, InputState, SdfBuffers, TextInput, UiBuffers,
@@ -41,6 +42,11 @@ pub struct State {
     pub ui_renderer: UiRenderer,
     pub text_renderer: TextRenderer,
     pub ui_screen: UiScreenBuffers,
+
+    /// Path of the currently open file (native only).
+    pub current_file_path: Option<String>,
+    /// Document name for display.
+    pub document_name: String,
 }
 
 impl State {
@@ -410,10 +416,157 @@ impl State {
             ui_renderer,
             text_renderer,
             ui_screen,
+            current_file_path: None,
+            document_name: "Untitled".to_string(),
         }
     }
 
     pub fn window(&self) -> &Arc<Window> {
         &self.window
+    }
+
+    /// Save the current canvas to a Document.
+    pub fn to_document(&self) -> Document {
+        Document::from_state(
+            &self.elements,
+            self.canvas.transform.offset,
+            self.canvas.transform.scale,
+            Some(&self.document_name),
+        )
+    }
+
+    /// Load a Document into the current state.
+    pub fn load_document(&mut self, doc: Document) {
+        self.elements = doc.elements;
+        self.redo_stack.clear();
+        self.canvas.transform.offset = doc.canvas_view.offset;
+        self.canvas.transform.scale = doc.canvas_view.zoom;
+        self.document_name = doc.name;
+
+        // Update GPU uniforms for the new canvas transform
+        self.canvas.uniform.update_transform(
+            &self.canvas.transform,
+            (self.size.width as f32, self.size.height as f32),
+        );
+        self.gpu.queue.write_buffer(
+            &self.canvas.uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[self.canvas.uniform]),
+        );
+    }
+
+    /// Save to the current file path or show Save As dialog (native only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn save(&mut self) {
+        let doc = self.to_document();
+        let json = match doc.to_json() {
+            Ok(j) => j,
+            Err(e) => {
+                log::error!("Failed to serialize document: {}", e);
+                return;
+            }
+        };
+
+        let path = if let Some(ref path) = self.current_file_path {
+            path.clone()
+        } else {
+            match crate::platform::save_file_dialog(&format!("{}.wcanvas", self.document_name)) {
+                crate::platform::FileDialogResult::Selected(p) => p,
+                crate::platform::FileDialogResult::Cancelled => return,
+            }
+        };
+
+        match crate::platform::save_to_file(&path, &json) {
+            Ok(()) => {
+                log::info!("Saved to {}", path);
+                self.current_file_path = Some(path.clone());
+                // Extract filename for display
+                if let Some(name) = std::path::Path::new(&path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                {
+                    self.document_name = name.to_string();
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to save: {}", e);
+            }
+        }
+    }
+
+    /// Show Open dialog and load file (native only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open(&mut self) {
+        let path = match crate::platform::open_file_dialog() {
+            crate::platform::FileDialogResult::Selected(p) => p,
+            crate::platform::FileDialogResult::Cancelled => return,
+        };
+
+        match crate::platform::load_from_file(&path) {
+            Ok(json) => match Document::from_json(&json) {
+                Ok(doc) => {
+                    self.load_document(doc);
+                    self.current_file_path = Some(path.clone());
+                    if let Some(name) = std::path::Path::new(&path)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                    {
+                        self.document_name = name.to_string();
+                    }
+                    log::info!("Opened {}", path);
+                }
+                Err(e) => {
+                    log::error!("Failed to parse document: {}", e);
+                }
+            },
+            Err(e) => {
+                log::error!("Failed to read file: {}", e);
+            }
+        }
+    }
+
+    /// Save to localStorage (WASM only).
+    #[cfg(target_arch = "wasm32")]
+    pub fn save_to_storage(&self) {
+        let doc = self.to_document();
+        match doc.to_json() {
+            Ok(json) => {
+                crate::platform::save_to_local_storage("wcanvas_autosave", &json);
+            }
+            Err(e) => {
+                log::error!("Failed to serialize for localStorage: {}", e);
+            }
+        }
+    }
+
+    /// Load from localStorage (WASM only).
+    #[cfg(target_arch = "wasm32")]
+    pub fn load_from_storage(&mut self) {
+        if let Some(json) = crate::platform::load_from_local_storage("wcanvas_autosave") {
+            match Document::from_json(&json) {
+                Ok(doc) => {
+                    self.load_document(doc);
+                    log::info!("Loaded from localStorage");
+                }
+                Err(e) => {
+                    log::warn!("Failed to parse localStorage data: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Trigger a JSON file download (WASM only).
+    #[cfg(target_arch = "wasm32")]
+    pub fn export_download(&self) {
+        let doc = self.to_document();
+        match doc.to_json() {
+            Ok(json) => {
+                let filename = format!("{}.wcanvas", self.document_name);
+                crate::platform::trigger_download(&filename, &json);
+            }
+            Err(e) => {
+                log::error!("Failed to serialize for export: {}", e);
+            }
+        }
     }
 } 

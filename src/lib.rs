@@ -1,9 +1,11 @@
 mod app;
 mod app_state;
 mod canvas;
+mod document;
 mod drawing;
 mod event_handler;
 mod math;
+mod platform;
 mod renderer;
 mod rough;
 mod state;
