@@ -11,6 +11,7 @@ mod text_renderer;
 mod texture;
 mod ui;
 mod update_logic;
+pub mod vector;
 mod vertex;
 
 pub use app::run;

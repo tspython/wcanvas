@@ -25,6 +25,7 @@ pub struct GpuContext {
     pub queue: Queue,
     pub config: SurfaceConfiguration,
     pub render_pipeline: RenderPipeline,
+    pub sdf_render_pipeline: RenderPipeline,
     pub ui_render_pipeline: RenderPipeline,
 }
 
@@ -54,6 +55,12 @@ pub struct GeometryBuffers {
 }
 
 pub struct UiBuffers {
+    pub vertex: Option<Buffer>,
+    pub index: Option<Buffer>,
+    pub count: u32,
+}
+
+pub struct SdfBuffers {
     pub vertex: Option<Buffer>,
     pub index: Option<Buffer>,
     pub count: u32,
