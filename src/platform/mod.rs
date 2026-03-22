@@ -1,7 +1,7 @@
-#[cfg(target_os = "macos")]
-mod macos;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
@@ -15,6 +15,10 @@ pub enum FileDialogResult {
 
 /// Show a native "Open File" dialog. Returns the selected file path or Cancelled.
 pub fn open_file_dialog() -> FileDialogResult {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return FileDialogResult::Cancelled;
+    }
     #[cfg(target_os = "macos")]
     {
         macos::open_file_dialog()
@@ -32,6 +36,11 @@ pub fn open_file_dialog() -> FileDialogResult {
 
 /// Show a native "Save File" dialog. Returns the selected file path or Cancelled.
 pub fn save_file_dialog(default_name: &str) -> FileDialogResult {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = default_name;
+        return FileDialogResult::Cancelled;
+    }
     #[cfg(target_os = "macos")]
     {
         macos::save_file_dialog(default_name)

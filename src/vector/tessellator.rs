@@ -1,6 +1,6 @@
-use crate::vertex::Vertex;
 use super::path::Path;
 use super::style::StrokeStyle;
+use crate::vertex::Vertex;
 
 /// Converts vector paths into GPU-ready triangle geometry.
 ///
@@ -55,10 +55,22 @@ impl PathTessellator {
         let ny = dx / len * width * 0.5;
 
         self.vertices.extend_from_slice(&[
-            Vertex { position: [p1[0] - nx, p1[1] - ny], color },
-            Vertex { position: [p1[0] + nx, p1[1] + ny], color },
-            Vertex { position: [p2[0] + nx, p2[1] + ny], color },
-            Vertex { position: [p2[0] - nx, p2[1] - ny], color },
+            Vertex {
+                position: [p1[0] - nx, p1[1] - ny],
+                color,
+            },
+            Vertex {
+                position: [p1[0] + nx, p1[1] + ny],
+                color,
+            },
+            Vertex {
+                position: [p2[0] + nx, p2[1] + ny],
+                color,
+            },
+            Vertex {
+                position: [p2[0] - nx, p2[1] - ny],
+                color,
+            },
         ]);
 
         self.indices.extend_from_slice(&[
@@ -90,11 +102,17 @@ impl PathTessellator {
         cy /= n;
 
         let center_idx = self.index_offset;
-        self.vertices.push(Vertex { position: [cx, cy], color });
+        self.vertices.push(Vertex {
+            position: [cx, cy],
+            color,
+        });
         self.index_offset += 1;
 
         for p in points {
-            self.vertices.push(Vertex { position: *p, color });
+            self.vertices.push(Vertex {
+                position: *p,
+                color,
+            });
         }
 
         let count = points.len() as u16;

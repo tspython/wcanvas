@@ -1,10 +1,13 @@
 use crate::app_state::State;
-use crate::drawing::{DrawingElement, Tool};
-use crate::state::UserInputState::{Dragging, Drawing, Idle, Panning};
+use crate::drawing::{BoxState, DrawingElement, Element, ElementId, GroupId, Tool};
+use crate::history::Action;
+use crate::state::ResizeHandle;
+use crate::state::UserInputState::{Dragging, Drawing, Idle, MarqueeSelecting, Panning, Resizing};
+use crate::ui::ColorInteraction;
+use crate::update_logic::handle_positions;
 use rand::Rng;
-use winit::keyboard::KeyCode;
-
 use winit::event::*;
+use winit::keyboard::KeyCode;
 
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
@@ -64,660 +67,1184 @@ impl State {
                 false
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                match button {
-                    MouseButton::Left => {
-                        match state {
-                            ElementState::Pressed => {
-                                if self.typing.active {
-                                    if !self.typing.buffer.is_empty() {
-                                        self.elements.push(DrawingElement::Text {
-                                            position: self.typing.pos_canvas,
-                                            content: self.typing.buffer.clone(),
-                                            color: self.current_color,
-                                            size: 32.0,
-                                        });
-                                        self.autosave();
-                                    }
-                                    self.typing.active = false;
-                                    self.typing.buffer.clear();
-                                }
-
-                                if let Some(tool) = self.ui_renderer.handle_click(
-                                    self.input.mouse_pos,
-                                    (self.size.width as f32, self.size.height as f32),
-                                ) {
-                                    self.current_tool = tool;
-                                    return true;
-                                }
-
-                                if let Some(color) =
-                                    self.ui_renderer.handle_color_click(self.input.mouse_pos)
-                                {
-                                    self.current_color = color;
-                                    return true;
-                                }
-
-                                if self.ui_renderer.is_mouse_over_ui(
-                                    self.input.mouse_pos,
-                                    (self.size.width as f32, self.size.height as f32),
-                                ) {
-                                    return true;
-                                }
-
-                                // Prevent drawing in titlebar area on macOS
-                                if self.is_mouse_in_titlebar(self.input.mouse_pos) {
-                                    return true;
-                                }
-
-                                if self.input.modifiers.shift_key() {
-                                    self.input.state = Panning;
-                                    self.input.pan_start =
-                                        Some((self.input.mouse_pos, self.canvas.transform.offset));
-                                } else {
-                                    let canvas_pos = self
-                                        .canvas
-                                        .transform
-                                        .screen_to_canvas(self.input.mouse_pos);
-
-                                    match self.current_tool {
-                                        Tool::Select => {
-                                            for (i, element) in self.elements.iter().enumerate() {
-                                                if self.is_element_at_position(element, canvas_pos)
-                                                {
-                                                    self.input.state = Dragging;
-                                                    self.input.selected_element = Some(i);
-                                                    self.input.drag_start = Some(canvas_pos);
-                                                    self.input.element_start_pos =
-                                                        Some(self.get_element_position(element));
-                                                    return true;
-                                                }
-                                            }
-                                            self.input.selected_element = None;
-                                        }
-                                        _ => {
-                                            self.input.state = Drawing;
-                                        }
-                                    }
-
-                                    match self.current_tool {
-                                        Tool::Pen => {
-                                            self.input.current_stroke.clear();
-                                            self.input.current_stroke.push(canvas_pos);
-                                        }
-                                        Tool::Rectangle
-                                        | Tool::Circle
-                                        | Tool::Diamond
-                                        | Tool::Arrow
-                                        | Tool::Line => {
-                                            self.input.drag_start = Some(canvas_pos);
-                                        }
-                                        Tool::Text => {
-                                            let canvas_pos = self
-                                                .canvas
-                                                .transform
-                                                .screen_to_canvas(self.input.mouse_pos);
-                                            self.typing.active = true;
-                                            self.typing.pos_canvas = canvas_pos;
-                                            self.typing.buffer.clear();
-                                            self.typing.cursor_visible = true;
-                                            self.typing.blink_timer = Instant::now();
-                                            return true;
-                                        }
-                                        Tool::Eraser => {
-                                            if let Some(element_index) =
-                                                self.find_element_at_position(canvas_pos)
-                                            {
-                                                self.elements.remove(element_index);
-                                                self.autosave();
-                                                return true;
-                                            }
-                                            return false;
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                            ElementState::Released => match self.input.state {
-                                Panning => {
-                                    self.input.state = Idle;
-                                    self.input.pan_start = None;
-                                }
-                                Drawing => {
-                                    self.input.state = Idle;
-                                    self.finish_drawing();
-                                }
-                                Dragging => {
-                                    self.input.state = Idle;
-                                    self.input.selected_element = None;
-                                    self.input.drag_start = None;
-                                    self.input.element_start_pos = None;
-                                }
-                                _ => {}
-                            },
-                        }
-                        true
-                    }
-                    MouseButton::Middle => {
-                        match state {
-                            ElementState::Pressed => {
-                                self.input.state = Panning;
-                                self.input.pan_start =
-                                    Some((self.input.mouse_pos, self.canvas.transform.offset));
-                            }
-                            ElementState::Released => {
-                                self.input.state = Idle;
-                                self.input.pan_start = None;
-                            }
-                        }
-                        true
-                    }
-                    _ => false,
-                }
+                self.handle_mouse_input(*state, *button)
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.input.mouse_pos = [position.x as f32, position.y as f32];
-
-                if self.input.state == Panning {
-                    if let Some((start_mouse, start_offset)) = self.input.pan_start {
-                        self.canvas.transform.offset[0] =
-                            start_offset[0] + (self.input.mouse_pos[0] - start_mouse[0]);
-                        self.canvas.transform.offset[1] =
-                            start_offset[1] + (self.input.mouse_pos[1] - start_mouse[1]);
-
-                        self.canvas.uniform.update_transform(
-                            &self.canvas.transform,
-                            (self.size.width as f32, self.size.height as f32),
-                        );
-                        self.gpu.queue.write_buffer(
-                            &self.canvas.uniform_buffer,
-                            0,
-                            bytemuck::cast_slice(&[self.canvas.uniform]),
-                        );
-                    }
-                } else if self.input.state == Drawing && self.current_tool == Tool::Pen {
-                    if self.ui_renderer.is_mouse_over_ui(
-                        self.input.mouse_pos,
-                        (self.size.width as f32, self.size.height as f32),
-                    ) || self.is_mouse_in_titlebar(self.input.mouse_pos)
-                    {
-                        self.finish_drawing();
-                        self.input.state = crate::state::UserInputState::Idle;
-                        return true;
-                    }
-
-                    let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-                    self.input.current_stroke.push(canvas_pos);
-                } else if self.input.state == Drawing {
-                    self.update_preview_element();
-                } else if self.input.state == Dragging {
-                    let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-                    if let (Some(idx), Some(start_mouse), Some(orig_pos)) = (
-                        self.input.selected_element,
-                        self.input.drag_start,
-                        self.input.element_start_pos,
-                    ) {
-                        let dx = canvas_pos[0] - start_mouse[0];
-                        let dy = canvas_pos[1] - start_mouse[1];
-                        self.move_element(idx, orig_pos, dx, dy);
-                    }
-                    return true;
-                }
-                true
+                self.handle_cursor_moved()
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                // Trackpads report PixelDelta for two-finger scroll and
-                // send Ctrl modifier for pinch-to-zoom gestures.
-                // Mouse wheels report LineDelta.
-                //
-                // Behavior:
-                //   PixelDelta without Ctrl → pan (trackpad scroll)
-                //   PixelDelta with Ctrl    → zoom (trackpad pinch)
-                //   LineDelta               → zoom (mouse wheel)
-                let is_trackpad_scroll = matches!(delta, MouseScrollDelta::PixelDelta(_))
-                    && !self.input.modifiers.control_key();
-
-                if is_trackpad_scroll {
-                    // Pan: apply pixel deltas directly to offset
-                    if let MouseScrollDelta::PixelDelta(pos) = delta {
-                        self.canvas.transform.offset[0] += pos.x as f32;
-                        self.canvas.transform.offset[1] += pos.y as f32;
-                    }
-                } else {
-                    // Zoom toward mouse cursor
-                    let zoom_factor = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => 1.0 + y * 0.1,
-                        MouseScrollDelta::PixelDelta(pos) => {
-                            // Ctrl+PixelDelta from trackpad pinch-to-zoom
-                            1.0 + pos.y as f32 * 0.005
-                        }
-                    };
-
-                    let mouse_canvas_before =
-                        self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-                    self.canvas.transform.scale *= zoom_factor;
-                    self.canvas.transform.scale = self.canvas.transform.scale.clamp(0.1, 10.0);
-                    let mouse_canvas_after =
-                        self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-
-                    self.canvas.transform.offset[0] += (mouse_canvas_after[0]
-                        - mouse_canvas_before[0])
-                        * self.canvas.transform.scale;
-                    self.canvas.transform.offset[1] += (mouse_canvas_after[1]
-                        - mouse_canvas_before[1])
-                        * self.canvas.transform.scale;
-                }
-
-                self.canvas.uniform.update_transform(
-                    &self.canvas.transform,
-                    (self.size.width as f32, self.size.height as f32),
-                );
-                self.gpu.queue.write_buffer(
-                    &self.canvas.uniform_buffer,
-                    0,
-                    bytemuck::cast_slice(&[self.canvas.uniform]),
-                );
-
+                self.handle_mouse_wheel(delta);
                 true
             }
             WindowEvent::KeyboardInput {
                 event: key_event, ..
-            } => {
-                if key_event.state != ElementState::Pressed {
-                    return false;
-                }
+            } => self.handle_keyboard_input(key_event),
+            WindowEvent::PinchGesture { delta, .. } => {
+                self.zoom_at_mouse(1.0 + *delta as f32);
+                true
+            }
+            WindowEvent::Ime(Ime::Commit(text)) => self.handle_ime_commit(text),
+            _ => false,
+        }
+    }
 
-                if self.typing.active {
-                    if let Some(txt) = &key_event.text {
-                        let mut added_visible = false;
-                        for ch in txt.chars() {
-                            if !ch.is_control() {
-                                self.typing.buffer.push(ch);
-                                added_visible = true;
-                            }
-                        }
-
-                        if added_visible {
-                            self.typing.cursor_visible = true;
-                            self.typing.blink_timer = Instant::now();
-                            return true;
-                        }
+    fn handle_mouse_input(&mut self, state: ElementState, button: MouseButton) -> bool {
+        match button {
+            MouseButton::Left => match state {
+                ElementState::Pressed => self.handle_left_press(),
+                ElementState::Released => self.handle_left_release(),
+            },
+            MouseButton::Middle => {
+                match state {
+                    ElementState::Pressed => {
+                        self.input.state = Panning;
+                        self.input.pan_start =
+                            Some((self.input.mouse_pos, self.canvas.transform.offset));
+                    }
+                    ElementState::Released => {
+                        self.input.state = Idle;
+                        self.input.pan_start = None;
                     }
                 }
+                true
+            }
+            _ => false,
+        }
+    }
 
-                let is_ctrl_or_cmd =
-                    self.input.modifiers.control_key() || self.input.modifiers.super_key();
+    fn handle_left_press(&mut self) -> bool {
+        if self.commit_active_text_if_needed(false) {
+            return true;
+        }
 
-                let keycode_opt = match key_event.physical_key {
-                    winit::keyboard::PhysicalKey::Code(code) => Some(code),
-                    _ => None,
-                };
+        if let Some(tool) = self.ui_renderer.handle_click(
+            self.input.mouse_pos,
+            (self.size.width as f32, self.size.height as f32),
+        ) {
+            self.current_tool = tool;
+            return true;
+        }
 
-                if let Some(keycode) = keycode_opt {
-                    match keycode {
-                        KeyCode::Backspace => {
-                            if self.typing.active && !self.typing.buffer.is_empty() {
-                                self.typing.buffer.pop();
-                                return true;
-                            }
-                            false
-                        }
-                        KeyCode::Enter => {
-                            if self.typing.active {
-                                if !self.typing.buffer.is_empty() {
-                                    self.elements.push(DrawingElement::Text {
-                                        position: self.typing.pos_canvas,
-                                        content: self.typing.buffer.clone(),
-                                        color: self.current_color,
-                                        size: 32.0,
-                                    });
-                                    self.redo_stack.clear();
-                                    self.autosave();
-                                }
-                                self.typing.active = false;
-                                self.typing.buffer.clear();
-                                return true;
-                            }
-                            false
-                        }
-                        KeyCode::Digit1 => {
-                            self.current_tool = Tool::Select;
-                            true
-                        }
-                        KeyCode::Digit2 => {
-                            self.current_tool = Tool::Pen;
-                            true
-                        }
-                        KeyCode::Digit3 => {
-                            self.current_tool = Tool::Rectangle;
-                            true
-                        }
-                        KeyCode::Digit4 => {
-                            self.current_tool = Tool::Circle;
-                            true
-                        }
-                        KeyCode::Digit5 => {
-                            self.current_tool = Tool::Arrow;
-                            true
-                        }
-                        KeyCode::Digit6 => {
-                            self.current_tool = Tool::Text;
-                            true
-                        }
-                        KeyCode::Digit7 => {
-                            self.current_tool = Tool::Line;
-                            true
-                        }
-                        KeyCode::Digit8 => {
-                            self.current_tool = Tool::Eraser;
-                            true
-                        }
-                        KeyCode::KeyS => {
-                            if is_ctrl_or_cmd {
-                                #[cfg(not(target_arch = "wasm32"))]
-                                {
-                                    self.save();
-                                }
-                                #[cfg(target_arch = "wasm32")]
-                                {
-                                    self.export_download();
-                                }
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        KeyCode::KeyO => {
-                            if is_ctrl_or_cmd {
-                                #[cfg(not(target_arch = "wasm32"))]
-                                {
-                                    self.open();
-                                }
-                                // WASM: file open requires async, handled via UI button
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        KeyCode::KeyY => {
-                            if is_ctrl_or_cmd {
-                                if let Some(element) = self.redo_stack.pop() {
-                                    self.elements.push(element);
-                                    self.autosave();
-                                }
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        KeyCode::KeyZ => {
-                            if is_ctrl_or_cmd {
-                                if let Some(element) = self.elements.pop() {
-                                    self.redo_stack.push(element);
-                                    self.autosave();
-                                }
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        KeyCode::Minus => {
-                            if is_ctrl_or_cmd {
-                                self.canvas.transform.scale *= 0.9;
-                                self.canvas.transform.scale =
-                                    self.canvas.transform.scale.clamp(0.1, 10.0);
-                                self.canvas.uniform.update_transform(
-                                    &self.canvas.transform,
-                                    (self.size.width as f32, self.size.height as f32),
-                                );
-                                self.gpu.queue.write_buffer(
-                                    &self.canvas.uniform_buffer,
-                                    0,
-                                    bytemuck::cast_slice(&[self.canvas.uniform]),
-                                );
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        KeyCode::Equal => {
-                            if is_ctrl_or_cmd {
-                                self.canvas.transform.scale *= 1.1;
-                                self.canvas.transform.scale =
-                                    self.canvas.transform.scale.clamp(0.1, 10.0);
-                                self.canvas.uniform.update_transform(
-                                    &self.canvas.transform,
-                                    (self.size.width as f32, self.size.height as f32),
-                                );
-                                self.gpu.queue.write_buffer(
-                                    &self.canvas.uniform_buffer,
-                                    0,
-                                    bytemuck::cast_slice(&[self.canvas.uniform]),
-                                );
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        _ => false,
-                    }
+        match self.ui_renderer.handle_color_interaction(
+            self.input.mouse_pos,
+            &self.color_picker,
+            (self.size.width as f32, self.size.height as f32),
+        ) {
+            ColorInteraction::None => {}
+            ColorInteraction::Color(color) => {
+                self.apply_ui_color(color);
+                return true;
+            }
+            ColorInteraction::TogglePicker => {
+                self.color_picker.open = !self.color_picker.open;
+                self.color_picker.drag_mode = None;
+                if self.color_picker.open {
+                    self.sync_picker_to_color(self.current_color);
+                }
+                return true;
+            }
+            ColorInteraction::BeginDrag(mode, color) => {
+                self.color_picker.drag_mode = Some(mode);
+                self.apply_ui_color(color);
+                return true;
+            }
+        }
+
+        if self.ui_renderer.is_mouse_over_ui(
+            self.input.mouse_pos,
+            (self.size.width as f32, self.size.height as f32),
+            &self.color_picker,
+        ) || self.is_mouse_in_titlebar(self.input.mouse_pos)
+        {
+            return true;
+        }
+
+        if self.input.modifiers.shift_key() && self.current_tool != Tool::Select {
+            self.input.state = Panning;
+            self.input.pan_start = Some((self.input.mouse_pos, self.canvas.transform.offset));
+            return true;
+        }
+
+        let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+        match self.current_tool {
+            Tool::Select => self.handle_select_press(canvas_pos),
+            Tool::Pen => {
+                self.input.state = Drawing;
+                self.input.current_stroke.clear();
+                self.input.current_stroke.push(canvas_pos);
+                true
+            }
+            Tool::Rectangle | Tool::Circle | Tool::Diamond | Tool::Arrow | Tool::Line => {
+                self.input.state = Drawing;
+                self.input.drag_start = Some(canvas_pos);
+                true
+            }
+            Tool::Text => {
+                self.start_text_editing(None, canvas_pos, String::new());
+                true
+            }
+            Tool::Eraser => {
+                if let Some(hit_id) = self.find_element_id_at_position(canvas_pos) {
+                    self.remove_ids_with_history(&self.collect_group_selection(hit_id));
+                    return true;
+                }
+                false
+            }
+        }
+    }
+
+    fn handle_left_release(&mut self) -> bool {
+        self.color_picker.drag_mode = None;
+        match self.input.state {
+            Panning => {
+                self.input.state = Idle;
+                self.input.pan_start = None;
+            }
+            Drawing => {
+                self.input.state = Idle;
+                self.finish_drawing();
+            }
+            Dragging => {
+                self.input.state = Idle;
+                self.finish_transform(ActionKind::Move);
+            }
+            Resizing => {
+                self.input.state = Idle;
+                self.finish_transform(ActionKind::Modify);
+                self.input.selection.active_handle = None;
+                self.input.selection.resize_bounds = None;
+            }
+            MarqueeSelecting => {
+                self.finish_marquee_selection();
+                self.input.state = Idle;
+            }
+            Idle => {}
+        }
+        true
+    }
+
+    fn handle_cursor_moved(&mut self) -> bool {
+        if let Some(drag_mode) = self.color_picker.drag_mode {
+            if let Some(color) = self.ui_renderer.handle_color_drag(
+                self.input.mouse_pos,
+                &self.color_picker,
+                drag_mode,
+                (self.size.width as f32, self.size.height as f32),
+            ) {
+                self.apply_ui_color(color);
+            }
+            return true;
+        }
+
+        if self.input.state == Panning {
+            if let Some((start_mouse, start_offset)) = self.input.pan_start {
+                self.canvas.transform.offset[0] =
+                    start_offset[0] + (self.input.mouse_pos[0] - start_mouse[0]);
+                self.canvas.transform.offset[1] =
+                    start_offset[1] + (self.input.mouse_pos[1] - start_mouse[1]);
+                self.flush_canvas_transform();
+            }
+            return true;
+        }
+
+        if self.input.state == Drawing && self.current_tool == Tool::Pen {
+            if self.ui_renderer.is_mouse_over_ui(
+                self.input.mouse_pos,
+                (self.size.width as f32, self.size.height as f32),
+                &self.color_picker,
+            ) || self.is_mouse_in_titlebar(self.input.mouse_pos)
+            {
+                self.finish_drawing();
+                self.input.state = Idle;
+                return true;
+            }
+            let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+            self.input.current_stroke.push(canvas_pos);
+            return true;
+        }
+
+        if self.input.state == Drawing {
+            self.update_preview_element();
+            return true;
+        }
+
+        let canvas_pos = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+        match self.input.state {
+            Dragging => {
+                self.drag_selection_to(canvas_pos);
+                true
+            }
+            Resizing => {
+                self.resize_selection_to(canvas_pos);
+                true
+            }
+            MarqueeSelecting => {
+                self.input.selection.marquee_current = Some(canvas_pos);
+                true
+            }
+            _ => true,
+        }
+    }
+
+    fn handle_keyboard_input(&mut self, key_event: &KeyEvent) -> bool {
+        if key_event.state != ElementState::Pressed {
+            return false;
+        }
+
+        let is_ctrl_or_cmd = self.input.modifiers.control_key() || self.input.modifiers.super_key();
+        let is_shift = self.input.modifiers.shift_key();
+        let is_alt = self.input.modifiers.alt_key();
+        let keycode = match key_event.physical_key {
+            winit::keyboard::PhysicalKey::Code(code) => code,
+            _ => return false,
+        };
+
+        if self.typing.active {
+            return self.handle_text_input_key(key_event, keycode, is_ctrl_or_cmd);
+        }
+
+        match keycode {
+            KeyCode::Escape => {
+                self.input.selection.clear();
+                self.current_tool = Tool::Select;
+                true
+            }
+            KeyCode::Delete | KeyCode::Backspace => {
+                if !self.input.selection.selected_ids.is_empty() {
+                    let ids = self.input.selection.selected_ids.clone();
+                    self.remove_ids_with_history(&ids);
+                    true
                 } else {
                     false
                 }
             }
-            WindowEvent::PinchGesture { delta, .. } => {
-                // Native trackpad pinch-to-zoom (macOS, iOS).
-                // delta is a magnification factor: positive = zoom in, negative = zoom out.
-                let zoom_factor = 1.0 + *delta as f32;
-
-                let mouse_canvas_before =
-                    self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-                self.canvas.transform.scale *= zoom_factor;
-                self.canvas.transform.scale = self.canvas.transform.scale.clamp(0.1, 10.0);
-                let mouse_canvas_after =
-                    self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-
-                self.canvas.transform.offset[0] += (mouse_canvas_after[0]
-                    - mouse_canvas_before[0])
-                    * self.canvas.transform.scale;
-                self.canvas.transform.offset[1] += (mouse_canvas_after[1]
-                    - mouse_canvas_before[1])
-                    * self.canvas.transform.scale;
-
-                self.canvas.uniform.update_transform(
-                    &self.canvas.transform,
-                    (self.size.width as f32, self.size.height as f32),
-                );
-                self.gpu.queue.write_buffer(
-                    &self.canvas.uniform_buffer,
-                    0,
-                    bytemuck::cast_slice(&[self.canvas.uniform]),
-                );
-
+            KeyCode::KeyF => {
+                self.toggle_fill_on_selection();
                 true
             }
-            WindowEvent::Ime(ime) => {
-                if let winit::event::Ime::Commit(text) = ime {
-                    if self.typing.active {
-                        for ch in text.chars() {
-                            if !ch.is_control() {
-                                self.typing.buffer.push(ch);
-                            }
-                        }
+            KeyCode::BracketLeft => {
+                if is_ctrl_or_cmd {
+                    self.reorder_selection(false, true);
+                } else if is_alt {
+                    self.adjust_selection_stroke_width(-0.5);
+                } else {
+                    self.reorder_selection(false, false);
+                }
+                true
+            }
+            KeyCode::BracketRight => {
+                if is_ctrl_or_cmd {
+                    self.reorder_selection(true, true);
+                } else if is_alt {
+                    self.adjust_selection_stroke_width(0.5);
+                } else {
+                    self.reorder_selection(true, false);
+                }
+                true
+            }
+            KeyCode::KeyD if is_ctrl_or_cmd => {
+                self.duplicate_selection();
+                true
+            }
+            KeyCode::KeyC if is_ctrl_or_cmd => {
+                self.copy_selection();
+                true
+            }
+            KeyCode::KeyV if is_ctrl_or_cmd => {
+                self.paste_selection();
+                true
+            }
+            KeyCode::KeyG if is_ctrl_or_cmd && is_shift => {
+                self.ungroup_selection();
+                true
+            }
+            KeyCode::KeyG if is_ctrl_or_cmd => {
+                self.group_selection();
+                true
+            }
+            KeyCode::KeyY if is_ctrl_or_cmd => {
+                self.redo();
+                true
+            }
+            KeyCode::KeyZ if is_ctrl_or_cmd => {
+                self.undo();
+                true
+            }
+            KeyCode::KeyS if is_ctrl_or_cmd => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.save();
+                #[cfg(target_arch = "wasm32")]
+                self.export_download();
+                true
+            }
+            KeyCode::KeyO if is_ctrl_or_cmd => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.open();
+                true
+            }
+            KeyCode::ArrowLeft if is_alt => {
+                self.align_selection(HAlign::Left);
+                true
+            }
+            KeyCode::ArrowRight if is_alt => {
+                self.align_selection(HAlign::Right);
+                true
+            }
+            KeyCode::ArrowUp if is_alt => {
+                self.align_selection(HAlign::CenterX);
+                true
+            }
+            KeyCode::ArrowDown if is_alt => {
+                self.align_selection(HAlign::CenterY);
+                true
+            }
+            KeyCode::Minus if is_ctrl_or_cmd => {
+                self.zoom_at_mouse(0.9);
+                true
+            }
+            KeyCode::Equal if is_ctrl_or_cmd => {
+                self.zoom_at_mouse(1.1);
+                true
+            }
+            KeyCode::Digit1 => {
+                self.current_tool = Tool::Select;
+                true
+            }
+            KeyCode::Digit2 => {
+                self.current_tool = Tool::Pen;
+                true
+            }
+            KeyCode::Digit3 => {
+                self.current_tool = Tool::Rectangle;
+                true
+            }
+            KeyCode::Digit4 => {
+                self.current_tool = Tool::Circle;
+                true
+            }
+            KeyCode::Digit5 => {
+                self.current_tool = Tool::Arrow;
+                true
+            }
+            KeyCode::Digit6 => {
+                self.current_tool = Tool::Text;
+                true
+            }
+            KeyCode::Digit7 => {
+                self.current_tool = Tool::Line;
+                true
+            }
+            KeyCode::Digit8 => {
+                self.current_tool = Tool::Eraser;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_text_input_key(
+        &mut self,
+        key_event: &KeyEvent,
+        keycode: KeyCode,
+        is_ctrl_or_cmd: bool,
+    ) -> bool {
+        match keycode {
+            KeyCode::Escape => {
+                self.commit_active_text_if_needed(true);
+                true
+            }
+            KeyCode::Enter => {
+                self.insert_text_at_cursor("\n");
+                true
+            }
+            KeyCode::Backspace => {
+                if self.typing.cursor_pos > 0 {
+                    let remove_at = self.typing.cursor_pos - 1;
+                    self.typing.buffer.remove(remove_at);
+                    self.typing.cursor_pos -= 1;
+                }
+                true
+            }
+            KeyCode::Delete => {
+                if self.typing.cursor_pos < self.typing.buffer.len() {
+                    self.typing.buffer.remove(self.typing.cursor_pos);
+                }
+                true
+            }
+            KeyCode::ArrowLeft => {
+                self.typing.cursor_pos = self.typing.cursor_pos.saturating_sub(1);
+                true
+            }
+            KeyCode::ArrowRight => {
+                self.typing.cursor_pos = (self.typing.cursor_pos + 1).min(self.typing.buffer.len());
+                true
+            }
+            KeyCode::ArrowUp => {
+                self.move_text_cursor_vertically(-1);
+                true
+            }
+            KeyCode::ArrowDown => {
+                self.move_text_cursor_vertically(1);
+                true
+            }
+            KeyCode::KeyC if is_ctrl_or_cmd => true,
+            KeyCode::KeyV if is_ctrl_or_cmd => true,
+            _ => {
+                if let Some(text) = &key_event.text {
+                    let visible: String = text.chars().filter(|ch| !ch.is_control()).collect();
+                    if !visible.is_empty() {
+                        self.insert_text_at_cursor(&visible);
                         return true;
                     }
                 }
                 false
             }
+        }
+    }
+
+    fn handle_ime_commit(&mut self, text: &str) -> bool {
+        if self.typing.active {
+            let visible: String = text.chars().filter(|ch| !ch.is_control()).collect();
+            if !visible.is_empty() {
+                self.insert_text_at_cursor(&visible);
+            }
+            return true;
+        }
+        false
+    }
+
+    fn handle_select_press(&mut self, canvas_pos: [f32; 2]) -> bool {
+        if let Some(bounds) = self.selection_bounds() {
+            if let Some(handle) = self.hit_resize_handle(bounds, canvas_pos) {
+                self.input.state = Resizing;
+                self.input.selection.active_handle = Some(handle);
+                self.input.selection.drag_origin = Some(canvas_pos);
+                self.input.selection.resize_bounds = Some(bounds);
+                self.input.transform_snapshot =
+                    self.snapshot_elements(&self.input.selection.selected_ids);
+                return true;
+            }
+        }
+
+        if let Some(hit_id) = self.find_element_id_at_position(canvas_pos) {
+            let double_click = self.is_double_click(hit_id);
+            let clicked_ids = if double_click {
+                vec![hit_id]
+            } else {
+                self.collect_group_selection(hit_id)
+            };
+
+            if double_click && self.begin_editing_if_text(hit_id) {
+                return true;
+            }
+
+            if self.input.modifiers.shift_key() {
+                let mut selected = self.input.selection.selected_ids.clone();
+                for id in clicked_ids {
+                    if let Some(index) = selected.iter().position(|selected_id| *selected_id == id)
+                    {
+                        selected.remove(index);
+                    } else {
+                        selected.push(id);
+                    }
+                }
+                self.set_selection(selected);
+            } else {
+                self.set_selection(clicked_ids);
+            }
+
+            self.input.selection.drag_origin = Some(canvas_pos);
+            self.input.transform_snapshot =
+                self.snapshot_elements(&self.input.selection.selected_ids);
+            self.input.state = Dragging;
+            self.input.selection.last_clicked = Some((hit_id, Instant::now()));
+            return true;
+        }
+
+        self.input.state = MarqueeSelecting;
+        self.input.selection.marquee_start = Some(canvas_pos);
+        self.input.selection.marquee_current = Some(canvas_pos);
+        if !self.input.modifiers.shift_key() {
+            self.set_selection(Vec::new());
+        }
+        true
+    }
+
+    fn drag_selection_to(&mut self, canvas_pos: [f32; 2]) {
+        let Some(origin) = self.input.selection.drag_origin else {
+            return;
+        };
+        let dx = canvas_pos[0] - origin[0];
+        let dy = canvas_pos[1] - origin[1];
+        let (snap_dx, snap_dy) = self.snap_delta_for_selection(dx, dy);
+        for id in self.input.selection.selected_ids.clone() {
+            if let Some(element) = self.find_element_mut_by_id(id) {
+                element.shape.translate_by(snap_dx, snap_dy);
+            }
+        }
+        self.input.selection.drag_origin = Some([origin[0] + snap_dx, origin[1] + snap_dy]);
+    }
+
+    fn resize_selection_to(&mut self, canvas_pos: [f32; 2]) {
+        let Some(handle) = self.input.selection.active_handle else {
+            return;
+        };
+        let Some(start_bounds) = self.input.selection.resize_bounds else {
+            return;
+        };
+        let Some(origin) = self.input.selection.drag_origin else {
+            return;
+        };
+        let dx = canvas_pos[0] - origin[0];
+        let dy = canvas_pos[1] - origin[1];
+        let new_bounds = apply_resize_handle(start_bounds, handle, dx, dy);
+        let snapped = self.snap_bounds(new_bounds);
+        let lock_aspect = self.input.modifiers.shift_key();
+
+        for snapshot in self.input.transform_snapshot.clone() {
+            if let Some(element) = self.find_element_mut_by_id(snapshot.id) {
+                *element = snapshot.clone();
+                element
+                    .shape
+                    .resize_to_bounds(start_bounds, snapped, lock_aspect);
+            }
+        }
+    }
+
+    fn finish_transform(&mut self, kind: ActionKind) {
+        let before = self.input.transform_snapshot.clone();
+        if before.is_empty() {
+            return;
+        }
+        let ids: Vec<_> = before.iter().map(|element| element.id).collect();
+        let after = self.snapshot_elements(&ids);
+        if before == after {
+            self.input.transform_snapshot.clear();
+            return;
+        }
+        let action = match kind {
+            ActionKind::Move => Action::Move { before, after },
+            ActionKind::Modify => Action::ModifyProperty { before, after },
+        };
+        self.record_action(action);
+        self.input.transform_snapshot.clear();
+    }
+
+    fn finish_marquee_selection(&mut self) {
+        let (Some(start), Some(current)) = (
+            self.input.selection.marquee_start,
+            self.input.selection.marquee_current,
+        ) else {
+            return;
+        };
+
+        let bounds = normalize_bounds((start, current));
+        let hits: Vec<_> = self
+            .elements
+            .iter()
+            .filter(|element| bounds_intersect(bounds, element.bounding_box()))
+            .map(|element| element.id)
+            .collect();
+
+        if self.input.modifiers.shift_key() {
+            let mut selected = self.input.selection.selected_ids.clone();
+            for id in hits {
+                if !selected.contains(&id) {
+                    selected.push(id);
+                }
+            }
+            self.set_selection(selected);
+        } else {
+            self.set_selection(hits);
+        }
+
+        self.input.selection.marquee_start = None;
+        self.input.selection.marquee_current = None;
+    }
+
+    fn start_text_editing(
+        &mut self,
+        editing_id: Option<ElementId>,
+        pos: [f32; 2],
+        content: String,
+    ) {
+        self.typing.active = true;
+        self.typing.editing_id = editing_id;
+        self.typing.pos_canvas = pos;
+        self.typing.buffer = content;
+        self.typing.cursor_pos = self.typing.buffer.len();
+        self.typing.cursor_visible = true;
+        self.typing.blink_timer = Instant::now();
+    }
+
+    fn commit_active_text_if_needed(&mut self, force: bool) -> bool {
+        if !self.typing.active {
+            return false;
+        }
+        if !force && self.current_tool == Tool::Text {
+            return false;
+        }
+
+        let content = self.typing.buffer.clone();
+        let pos = self.typing.pos_canvas;
+        let size = textbox_size(&content, 32.0);
+        let editing_id = self.typing.editing_id;
+        self.typing.active = false;
+        self.typing.editing_id = None;
+        self.typing.buffer.clear();
+        self.typing.cursor_pos = 0;
+
+        if content.is_empty() {
+            return true;
+        }
+
+        if let Some(id) = editing_id {
+            if let Some(before) = self.find_element_by_id(id).cloned() {
+                if let Some(element) = self.find_element_mut_by_id(id) {
+                    element.shape = DrawingElement::TextBox {
+                        id: id.0,
+                        pos,
+                        size,
+                        content,
+                        color: before.shape.color(),
+                        font_size: 32.0,
+                        state: BoxState::Idle,
+                    };
+                    let after = element.clone();
+                    self.record_action(Action::ModifyProperty {
+                        before: vec![before],
+                        after: vec![after],
+                    });
+                }
+            }
+        } else {
+            let element = Element::new(DrawingElement::TextBox {
+                id: 0,
+                pos,
+                size,
+                content,
+                color: self.current_color,
+                font_size: 32.0,
+                state: BoxState::Idle,
+            });
+            let mut element = element;
+            if let DrawingElement::TextBox { id, .. } = &mut element.shape {
+                *id = element.id.0;
+            }
+            let index = self.elements.len();
+            self.apply_and_record(Action::Add {
+                elements: vec![(index, element.clone())],
+            });
+            self.set_selection(vec![element.id]);
+        }
+        true
+    }
+
+    fn begin_editing_if_text(&mut self, id: ElementId) -> bool {
+        let Some(element) = self.find_element_by_id(id).cloned() else {
+            return false;
+        };
+
+        match element.shape {
+            DrawingElement::TextBox { pos, content, .. } => {
+                self.start_text_editing(Some(id), pos, content);
+                true
+            }
+            DrawingElement::Text {
+                position, content, ..
+            } => {
+                if let Some(target) = self.find_element_mut_by_id(id) {
+                    target.shape = DrawingElement::TextBox {
+                        id: id.0,
+                        pos: position,
+                        size: textbox_size(&content, 32.0),
+                        content: content.clone(),
+                        color: target.shape.color(),
+                        font_size: 32.0,
+                        state: BoxState::Editing,
+                    };
+                }
+                self.start_text_editing(Some(id), position, content);
+                true
+            }
             _ => false,
         }
+    }
+
+    fn insert_text_at_cursor(&mut self, text: &str) {
+        self.typing.buffer.insert_str(self.typing.cursor_pos, text);
+        self.typing.cursor_pos += text.len();
+        self.typing.cursor_visible = true;
+        self.typing.blink_timer = Instant::now();
+    }
+
+    fn move_text_cursor_vertically(&mut self, direction: i32) {
+        let cursor = self.typing.cursor_pos.min(self.typing.buffer.len());
+        let before = &self.typing.buffer[..cursor];
+        let current_col = before.chars().rev().take_while(|ch| *ch != '\n').count();
+        let current_line = before.chars().filter(|ch| *ch == '\n').count();
+        let lines: Vec<&str> = self.typing.buffer.split('\n').collect();
+        let target_line = if direction < 0 {
+            current_line.saturating_sub(1)
+        } else {
+            (current_line + 1).min(lines.len().saturating_sub(1))
+        };
+        let mut target_index = 0usize;
+        for (line_index, line) in lines.iter().enumerate() {
+            if line_index == target_line {
+                target_index += current_col.min(line.chars().count());
+                break;
+            }
+            target_index += line.len() + 1;
+        }
+        self.typing.cursor_pos = target_index.min(self.typing.buffer.len());
+    }
+
+    fn apply_color_to_selection(&mut self, color: [f32; 4]) {
+        let ids = self.input.selection.selected_ids.clone();
+        if ids.is_empty() {
+            self.current_color = color;
+            self.sync_picker_to_color(color);
+            return;
+        }
+        let before = self.snapshot_elements(&ids);
+        for id in &ids {
+            if let Some(element) = self.find_element_mut_by_id(*id) {
+                element.shape.set_color(color);
+            }
+        }
+        let after = self.snapshot_elements(&ids);
+        self.current_color = color;
+        self.sync_picker_to_color(color);
+        self.record_action(Action::ModifyProperty { before, after });
+    }
+
+    fn apply_ui_color(&mut self, color: [f32; 4]) {
+        if self.current_tool == Tool::Select && !self.input.selection.selected_ids.is_empty() {
+            self.apply_color_to_selection(color);
+        } else {
+            self.current_color = color;
+            self.sync_picker_to_color(color);
+        }
+    }
+
+    fn toggle_fill_on_selection(&mut self) {
+        let ids = self.input.selection.selected_ids.clone();
+        if ids.is_empty() {
+            return;
+        }
+        let before = self.snapshot_elements(&ids);
+        let mut changed = false;
+        for id in &ids {
+            if let Some(element) = self.find_element_mut_by_id(*id) {
+                changed |= element.shape.toggle_fill();
+            }
+        }
+        if changed {
+            let after = self.snapshot_elements(&ids);
+            self.record_action(Action::ModifyProperty { before, after });
+        }
+    }
+
+    fn adjust_selection_stroke_width(&mut self, delta: f32) {
+        let ids = self.input.selection.selected_ids.clone();
+        if ids.is_empty() {
+            self.stroke_width = (self.stroke_width + delta).max(0.5);
+            return;
+        }
+        let before = self.snapshot_elements(&ids);
+        for id in &ids {
+            if let Some(element) = self.find_element_mut_by_id(*id) {
+                let width = element.shape.stroke_width() + delta;
+                element.shape.set_stroke_width(width);
+            }
+        }
+        let after = self.snapshot_elements(&ids);
+        self.record_action(Action::ModifyProperty { before, after });
+    }
+
+    fn remove_ids_with_history(&mut self, ids: &[ElementId]) {
+        let removed: Vec<_> = self
+            .elements
+            .iter()
+            .enumerate()
+            .filter(|(_, element)| ids.contains(&element.id))
+            .map(|(index, element)| (index, element.clone()))
+            .collect();
+        if removed.is_empty() {
+            return;
+        }
+        self.apply_and_record(Action::Remove { elements: removed });
+    }
+
+    fn duplicate_selection(&mut self) {
+        let selected = self.snapshot_elements(&self.input.selection.selected_ids.clone());
+        if selected.is_empty() {
+            return;
+        }
+        let new_group = if selected
+            .iter()
+            .all(|element| element.group_id == selected[0].group_id)
+        {
+            selected[0].group_id.map(|_| GroupId::next())
+        } else {
+            None
+        };
+        let duplicates: Vec<_> = selected
+            .into_iter()
+            .enumerate()
+            .map(|(offset, mut element)| {
+                element.id = ElementId::next();
+                element.group_id = new_group.or(element.group_id);
+                element.shape.translate_by(20.0, 20.0);
+                if let DrawingElement::TextBox { id, .. } = &mut element.shape {
+                    *id = element.id.0;
+                }
+                (self.elements.len() + offset, element)
+            })
+            .collect();
+        let ids: Vec<_> = duplicates.iter().map(|(_, element)| element.id).collect();
+        self.apply_and_record(Action::Add {
+            elements: duplicates.clone(),
+        });
+        self.set_selection(ids);
+    }
+
+    fn copy_selection(&mut self) {
+        self.clipboard = self.snapshot_elements(&self.input.selection.selected_ids.clone());
+    }
+
+    fn paste_selection(&mut self) {
+        if self.clipboard.is_empty() {
+            return;
+        }
+        let group_remap = if self
+            .clipboard
+            .iter()
+            .any(|element| element.group_id.is_some())
+        {
+            Some(GroupId::next())
+        } else {
+            None
+        };
+        let pasted: Vec<_> = self
+            .clipboard
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(offset, mut element)| {
+                element.id = ElementId::next();
+                if element.group_id.is_some() {
+                    element.group_id = group_remap;
+                }
+                element.shape.translate_by(24.0, 24.0);
+                if let DrawingElement::TextBox { id, .. } = &mut element.shape {
+                    *id = element.id.0;
+                }
+                (self.elements.len() + offset, element)
+            })
+            .collect();
+        let ids: Vec<_> = pasted.iter().map(|(_, element)| element.id).collect();
+        self.apply_and_record(Action::Add {
+            elements: pasted.clone(),
+        });
+        self.set_selection(ids);
+    }
+
+    fn reorder_selection(&mut self, forward: bool, to_edge: bool) {
+        let ids = self.input.selection.selected_ids.clone();
+        if ids.is_empty() {
+            return;
+        }
+        let before: Vec<_> = self.elements.iter().map(|element| element.id).collect();
+        let mut selected = Vec::new();
+        let mut others = Vec::new();
+        for element in self.elements.clone() {
+            if ids.contains(&element.id) {
+                selected.push(element);
+            } else {
+                others.push(element);
+            }
+        }
+
+        if to_edge {
+            self.elements = if forward {
+                others.into_iter().chain(selected.into_iter()).collect()
+            } else {
+                selected.into_iter().chain(others.into_iter()).collect()
+            };
+        } else {
+            let mut order = self.elements.clone();
+            if forward {
+                for id in ids.iter().rev() {
+                    if let Some(index) = order.iter().position(|element| element.id == *id) {
+                        if index + 1 < order.len() {
+                            order.swap(index, index + 1);
+                        }
+                    }
+                }
+            } else {
+                for id in &ids {
+                    if let Some(index) = order.iter().position(|element| element.id == *id) {
+                        if index > 0 {
+                            order.swap(index, index - 1);
+                        }
+                    }
+                }
+            }
+            self.elements = order;
+        }
+
+        let after: Vec<_> = self.elements.iter().map(|element| element.id).collect();
+        if before != after {
+            self.record_action(Action::Reorder { before, after });
+        }
+    }
+
+    fn group_selection(&mut self) {
+        if self.input.selection.selected_ids.len() < 2 {
+            return;
+        }
+        let ids = self.input.selection.selected_ids.clone();
+        let before = self.snapshot_elements(&ids);
+        let group_id = GroupId::next();
+        for id in &ids {
+            if let Some(element) = self.find_element_mut_by_id(*id) {
+                element.group_id = Some(group_id);
+            }
+        }
+        let after = self.snapshot_elements(&ids);
+        self.record_action(Action::Batch(vec![Action::ModifyProperty {
+            before,
+            after,
+        }]));
+    }
+
+    fn ungroup_selection(&mut self) {
+        let ids = self.input.selection.selected_ids.clone();
+        if ids.is_empty() {
+            return;
+        }
+        let before = self.snapshot_elements(&ids);
+        for id in &ids {
+            if let Some(element) = self.find_element_mut_by_id(*id) {
+                element.group_id = None;
+            }
+        }
+        let after = self.snapshot_elements(&ids);
+        self.record_action(Action::Batch(vec![Action::ModifyProperty {
+            before,
+            after,
+        }]));
+    }
+
+    fn align_selection(&mut self, align: HAlign) {
+        let ids = self.input.selection.selected_ids.clone();
+        if ids.len() < 2 {
+            return;
+        }
+        let Some(bounds) = self.selection_bounds() else {
+            return;
+        };
+        let before = self.snapshot_elements(&ids);
+        for id in &ids {
+            if let Some(element) = self.find_element_mut_by_id(*id) {
+                let element_bounds = element.bounding_box();
+                let dx = match align {
+                    HAlign::Left => bounds.0[0] - element_bounds.0[0],
+                    HAlign::Right => bounds.1[0] - element_bounds.1[0],
+                    HAlign::CenterX => {
+                        ((bounds.0[0] + bounds.1[0]) - (element_bounds.0[0] + element_bounds.1[0]))
+                            * 0.5
+                    }
+                    HAlign::CenterY => {
+                        ((bounds.0[1] + bounds.1[1]) - (element_bounds.0[1] + element_bounds.1[1]))
+                            * 0.5
+                    }
+                };
+                let dy = match align {
+                    HAlign::CenterY => {
+                        ((bounds.0[1] + bounds.1[1]) - (element_bounds.0[1] + element_bounds.1[1]))
+                            * 0.5
+                    }
+                    _ => 0.0,
+                };
+                element.shape.translate_by(dx, dy);
+            }
+        }
+        let after = self.snapshot_elements(&ids);
+        self.record_action(Action::ModifyProperty { before, after });
+    }
+
+    fn selection_bounds(&self) -> Option<([f32; 2], [f32; 2])> {
+        let mut iter = self
+            .elements
+            .iter()
+            .filter(|element| self.input.selection.selected_ids.contains(&element.id));
+        let first = iter.next()?;
+        let (mut min, mut max) = first.bounding_box();
+        for element in iter {
+            let bounds = element.bounding_box();
+            min[0] = min[0].min(bounds.0[0]);
+            min[1] = min[1].min(bounds.0[1]);
+            max[0] = max[0].max(bounds.1[0]);
+            max[1] = max[1].max(bounds.1[1]);
+        }
+        Some((min, max))
+    }
+
+    fn hit_resize_handle(
+        &self,
+        bounds: ([f32; 2], [f32; 2]),
+        pos: [f32; 2],
+    ) -> Option<ResizeHandle> {
+        for (handle, handle_pos) in handle_positions(bounds) {
+            if (pos[0] - handle_pos[0]).abs() <= 10.0 && (pos[1] - handle_pos[1]).abs() <= 10.0 {
+                return Some(handle);
+            }
+        }
+        None
+    }
+
+    fn find_element_id_at_position(&self, pos: [f32; 2]) -> Option<ElementId> {
+        self.elements
+            .iter()
+            .rev()
+            .find(|element| element.shape.hit_test(pos))
+            .map(|element| element.id)
+    }
+
+    fn collect_group_selection(&self, id: ElementId) -> Vec<ElementId> {
+        let Some(element) = self.find_element_by_id(id) else {
+            return Vec::new();
+        };
+        if let Some(group_id) = element.group_id {
+            self.elements
+                .iter()
+                .filter(|candidate| candidate.group_id == Some(group_id))
+                .map(|candidate| candidate.id)
+                .collect()
+        } else {
+            vec![id]
+        }
+    }
+
+    fn is_double_click(&self, id: ElementId) -> bool {
+        self.input
+            .selection
+            .last_clicked
+            .map(|(last_id, instant)| last_id == id && instant.elapsed().as_millis() < 350)
+            .unwrap_or(false)
+    }
+
+    fn flush_canvas_transform(&mut self) {
+        self.canvas.uniform.update_transform(
+            &self.canvas.transform,
+            (self.size.width as f32, self.size.height as f32),
+        );
+        self.gpu.queue.write_buffer(
+            &self.canvas.uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[self.canvas.uniform]),
+        );
+    }
+
+    fn handle_mouse_wheel(&mut self, delta: &MouseScrollDelta) {
+        let is_trackpad_scroll =
+            matches!(delta, MouseScrollDelta::PixelDelta(_)) && !self.input.modifiers.control_key();
+
+        if is_trackpad_scroll {
+            if let MouseScrollDelta::PixelDelta(pos) = delta {
+                self.canvas.transform.offset[0] += pos.x as f32;
+                self.canvas.transform.offset[1] += pos.y as f32;
+                self.flush_canvas_transform();
+            }
+            return;
+        }
+
+        let zoom_factor = match delta {
+            MouseScrollDelta::LineDelta(_, y) => 1.0 + y * 0.1,
+            MouseScrollDelta::PixelDelta(pos) => 1.0 + pos.y as f32 * 0.005,
+        };
+        self.zoom_at_mouse(zoom_factor);
+    }
+
+    fn zoom_at_mouse(&mut self, zoom_factor: f32) {
+        let mouse_canvas_before = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+        self.canvas.transform.scale *= zoom_factor;
+        self.canvas.transform.scale = self.canvas.transform.scale.clamp(0.1, 10.0);
+        let mouse_canvas_after = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+        self.canvas.transform.offset[0] +=
+            (mouse_canvas_after[0] - mouse_canvas_before[0]) * self.canvas.transform.scale;
+        self.canvas.transform.offset[1] +=
+            (mouse_canvas_after[1] - mouse_canvas_before[1]) * self.canvas.transform.scale;
+        self.flush_canvas_transform();
     }
 
     pub fn finish_drawing(&mut self) {
         let element = match self.current_tool {
             Tool::Pen => {
                 if self.input.current_stroke.len() > 1 {
-                    Some(DrawingElement::Stroke {
+                    Some(Element::new(DrawingElement::Stroke {
                         points: self.input.current_stroke.clone(),
                         color: self.current_color,
                         width: self.stroke_width,
-                    })
+                    }))
                 } else {
                     None
                 }
             }
             Tool::Rectangle => {
-                if let Some(start) = self.input.drag_start {
-                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-                    let position = [start[0].min(end[0]), start[1].min(end[1])];
-                    let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
-
-                    let mut rough_options = crate::rough::RoughOptions::default();
-                    rough_options.stroke_width = self.stroke_width;
-
-                    let mut rng = rand::rng();
-
-                    rough_options.roughness = 0.7 + rng.random::<f32>() * 1.0;
-                    rough_options.bowing = 0.3 + rng.random::<f32>() * 1.2;
-                    rough_options.max_randomness_offset = 1.0 + rng.random::<f32>() * 1.5;
-                    rough_options.curve_tightness = rng.random::<f32>() * 0.2;
-
-                    rough_options.seed = Some(rng.random::<u64>());
-
-                    Some(DrawingElement::Rectangle {
-                        position,
-                        size,
-                        color: self.current_color,
-                        fill: false,
-                        stroke_width: self.stroke_width,
-                        rough_style: Some(rough_options),
-                    })
-                } else {
-                    None
-                }
+                self.shape_from_drag(|position, size, rough_style| DrawingElement::Rectangle {
+                    position,
+                    size,
+                    color: self.current_color,
+                    fill: false,
+                    stroke_width: self.stroke_width,
+                    rough_style: Some(rough_style),
+                })
             }
             Tool::Circle => {
                 if let Some(start) = self.input.drag_start {
                     let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     let radius = ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt();
-
-                    let mut rough_options = crate::rough::RoughOptions::default();
+                    let mut rough_options = self.random_rough_options(0.4, 0.4, 0.5, 32.0, 0.1);
                     rough_options.stroke_width = self.stroke_width;
-
-                    let mut rng = rand::rng();
-
-                    rough_options.roughness = 0.4 + rng.random::<f32>() * 0.4;
-                    rough_options.bowing = 0.2 + rng.random::<f32>() * 0.3;
-                    rough_options.max_randomness_offset = 0.5 + rng.random::<f32>() * 0.5;
-                    rough_options.curve_step_count = 32 + (rng.random::<f32>() * 8.0) as u32;
-                    rough_options.curve_tightness = rng.random::<f32>() * 0.1;
-
-                    rough_options.seed = Some(rng.random::<u64>());
-
-                    Some(DrawingElement::Circle {
+                    Some(Element::new(DrawingElement::Circle {
                         center: start,
                         radius,
                         color: self.current_color,
                         fill: false,
                         stroke_width: self.stroke_width,
                         rough_style: Some(rough_options),
-                    })
+                    }))
                 } else {
                     None
                 }
             }
-            Tool::Arrow => {
-                if let Some(start) = self.input.drag_start {
-                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-
-                    let mut rough_options = crate::rough::RoughOptions::default();
-                    rough_options.stroke_width = self.stroke_width;
-
-                    let mut rng = rand::rng();
-
-                    rough_options.roughness = 0.5 + rng.random::<f32>() * 0.6;
-                    rough_options.bowing = 0.3 + rng.random::<f32>() * 0.4;
-                    rough_options.max_randomness_offset = 0.8 + rng.random::<f32>() * 0.7;
-                    rough_options.curve_step_count = 8 + (rng.random::<f32>() * 4.0) as u32;
-                    rough_options.curve_tightness = rng.random::<f32>() * 0.1;
-
-                    rough_options.seed = Some(rng.random::<u64>());
-
-                    Some(DrawingElement::Arrow {
-                        start,
-                        end,
-                        color: self.current_color,
-                        width: self.stroke_width,
-                        rough_style: Some(rough_options),
-                    })
-                } else {
-                    None
-                }
-            }
-            Tool::Line => {
-                if let Some(start) = self.input.drag_start {
-                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-
-                    let mut rough_options = crate::rough::RoughOptions::default();
-                    rough_options.stroke_width = self.stroke_width;
-
-                    let mut rng = rand::rng();
-
-                    rough_options.roughness = 0.6 + rng.random::<f32>() * 0.8;
-                    rough_options.bowing = 0.4 + rng.random::<f32>() * 0.6;
-                    rough_options.max_randomness_offset = 1.0 + rng.random::<f32>() * 1.0;
-                    rough_options.curve_step_count = 6 + (rng.random::<f32>() * 6.0) as u32;
-                    rough_options.curve_tightness = rng.random::<f32>() * 0.1;
-
-                    rough_options.seed = Some(rng.random::<u64>());
-
-                    Some(DrawingElement::Line {
-                        start,
-                        end,
-                        color: self.current_color,
-                        width: self.stroke_width,
-                        rough_style: Some(rough_options),
-                    })
-                } else {
-                    None
-                }
-            }
+            Tool::Arrow => self.line_like_from_drag(true),
+            Tool::Line => self.line_like_from_drag(false),
             Tool::Diamond => {
-                if let Some(start) = self.input.drag_start {
-                    let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-                    let position = [start[0].min(end[0]), start[1].min(end[1])];
-                    let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
-
-                    let mut rough_options = crate::rough::RoughOptions::default();
-                    rough_options.stroke_width = self.stroke_width;
-
-                    let mut rng = rand::rng();
-
-                    rough_options.roughness = 0.6 + rng.random::<f32>() * 0.8;
-                    rough_options.bowing = 0.4 + rng.random::<f32>() * 0.6;
-                    rough_options.max_randomness_offset = 1.0 + rng.random::<f32>() * 1.0;
-                    rough_options.curve_tightness = rng.random::<f32>() * 0.2;
-
-                    rough_options.seed = Some(rng.random::<u64>());
-
-                    Some(DrawingElement::Diamond {
-                        position,
-                        size,
-                        color: self.current_color,
-                        fill: false,
-                        stroke_width: self.stroke_width,
-                        rough_style: Some(rough_options),
-                    })
-                } else {
-                    None
-                }
+                self.shape_from_drag(|position, size, rough_style| DrawingElement::Diamond {
+                    position,
+                    size,
+                    color: self.current_color,
+                    fill: false,
+                    stroke_width: self.stroke_width,
+                    rough_style: Some(rough_style),
+                })
             }
             _ => None,
         };
 
         if let Some(element) = element {
-            self.elements.push(element);
-            self.redo_stack.clear();
-            self.autosave();
+            let index = self.elements.len();
+            let id = element.id;
+            self.apply_and_record(Action::Add {
+                elements: vec![(index, element)],
+            });
+            self.set_selection(vec![id]);
         }
 
         self.input.current_stroke.clear();
@@ -725,19 +1252,76 @@ impl State {
         self.input.preview_element = None;
     }
 
+    fn shape_from_drag<F>(&self, shape_fn: F) -> Option<Element>
+    where
+        F: FnOnce([f32; 2], [f32; 2], crate::rough::RoughOptions) -> DrawingElement,
+    {
+        let start = self.input.drag_start?;
+        let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+        let position = [start[0].min(end[0]), start[1].min(end[1])];
+        let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
+        let mut rough_options = self.random_rough_options(0.6, 0.8, 1.0, 16.0, 0.2);
+        rough_options.stroke_width = self.stroke_width;
+        Some(Element::new(shape_fn(position, size, rough_options)))
+    }
+
+    fn line_like_from_drag(&self, is_arrow: bool) -> Option<Element> {
+        let start = self.input.drag_start?;
+        let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
+        let mut rough_options = self.random_rough_options(0.5, 0.6, 0.8, 8.0, 0.1);
+        rough_options.stroke_width = self.stroke_width;
+        let shape = if is_arrow {
+            DrawingElement::Arrow {
+                start,
+                end,
+                color: self.current_color,
+                width: self.stroke_width,
+                rough_style: Some(rough_options),
+            }
+        } else {
+            DrawingElement::Line {
+                start,
+                end,
+                color: self.current_color,
+                width: self.stroke_width,
+                rough_style: Some(rough_options),
+            }
+        };
+        Some(Element::new(shape))
+    }
+
+    fn random_rough_options(
+        &self,
+        roughness_base: f32,
+        roughness_variation: f32,
+        randomness_base: f32,
+        step_count: f32,
+        tightness: f32,
+    ) -> crate::rough::RoughOptions {
+        let mut rough_options = crate::rough::RoughOptions::default();
+        let mut rng = rand::rng();
+        rough_options.roughness = roughness_base + rng.random::<f32>() * roughness_variation;
+        rough_options.bowing = roughness_base + rng.random::<f32>() * roughness_variation;
+        rough_options.max_randomness_offset =
+            randomness_base + rng.random::<f32>() * randomness_base;
+        rough_options.curve_step_count =
+            (step_count + (rng.random::<f32>() * step_count * 0.25)) as u32;
+        rough_options.curve_tightness = rng.random::<f32>() * tightness;
+        rough_options.seed = Some(rng.random::<u64>());
+        rough_options
+    }
+
     fn update_preview_element(&mut self) {
         if self.input.state != Drawing {
             self.input.preview_element = None;
             return;
         }
-
         match self.current_tool {
             Tool::Rectangle => {
                 if let Some(start) = self.input.drag_start {
                     let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     let position = [start[0].min(end[0]), start[1].min(end[1])];
                     let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
-
                     self.input.preview_element = Some(DrawingElement::Rectangle {
                         position,
                         size,
@@ -757,7 +1341,6 @@ impl State {
                 if let Some(start) = self.input.drag_start {
                     let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     let radius = ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt();
-
                     self.input.preview_element = Some(DrawingElement::Circle {
                         center: start,
                         radius,
@@ -776,7 +1359,6 @@ impl State {
             Tool::Arrow => {
                 if let Some(start) = self.input.drag_start {
                     let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-
                     self.input.preview_element = Some(DrawingElement::Arrow {
                         start,
                         end,
@@ -794,7 +1376,6 @@ impl State {
             Tool::Line => {
                 if let Some(start) = self.input.drag_start {
                     let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
-
                     self.input.preview_element = Some(DrawingElement::Line {
                         start,
                         end,
@@ -814,7 +1395,6 @@ impl State {
                     let end = self.canvas.transform.screen_to_canvas(self.input.mouse_pos);
                     let position = [start[0].min(end[0]), start[1].min(end[1])];
                     let size = [(end[0] - start[0]).abs(), (end[1] - start[1]).abs()];
-
                     self.input.preview_element = Some(DrawingElement::Diamond {
                         position,
                         size,
@@ -836,206 +1416,153 @@ impl State {
         }
     }
 
-    // Helper methods for element selection and manipulation
-    fn is_element_at_position(&self, element: &DrawingElement, pos: [f32; 2]) -> bool {
-        match element {
-            DrawingElement::Text {
-                position,
-                content,
-                size,
-                ..
-            } => {
-                let char_width = size * 0.6;
-                let text_width = content.len() as f32 * char_width;
-                let text_height = size * 1.2;
-
-                pos[0] >= position[0] - 5.0
-                    && pos[0] <= position[0] + text_width + 5.0
-                    && pos[1] >= position[1] - text_height
-                    && pos[1] <= position[1] + 5.0
+    fn snap_delta_for_selection(&self, dx: f32, dy: f32) -> (f32, f32) {
+        let mut snapped_dx = snap_to_grid(dx);
+        let mut snapped_dy = snap_to_grid(dy);
+        if let Some(bounds) = self.selection_bounds() {
+            let moved = (
+                [bounds.0[0] + snapped_dx, bounds.0[1] + snapped_dy],
+                [bounds.1[0] + snapped_dx, bounds.1[1] + snapped_dy],
+            );
+            let candidates = self.snap_candidates(&self.input.selection.selected_ids);
+            if let Some(adjust) =
+                snap_against_candidates(moved.0[0], moved.1[0], &candidates.x_edges)
+            {
+                snapped_dx += adjust;
             }
-            DrawingElement::TextBox {
-                pos: element_pos,
-                size,
-                ..
-            } => {
-                pos[0] >= element_pos[0]
-                    && pos[0] <= element_pos[0] + size[0]
-                    && pos[1] >= element_pos[1]
-                    && pos[1] <= element_pos[1] + size[1]
+            if let Some(adjust) =
+                snap_against_candidates(moved.0[1], moved.1[1], &candidates.y_edges)
+            {
+                snapped_dy += adjust;
             }
-            DrawingElement::Rectangle { position, size, .. } => {
-                pos[0] >= position[0]
-                    && pos[0] <= position[0] + size[0]
-                    && pos[1] >= position[1]
-                    && pos[1] <= position[1] + size[1]
-            }
-            DrawingElement::Circle { center, radius, .. } => {
-                let distance = ((pos[0] - center[0]).powi(2) + (pos[1] - center[1]).powi(2)).sqrt();
-                distance <= *radius
-            }
-            DrawingElement::Diamond {
-                position,
-                size,
-                color,
-                fill,
-                stroke_width,
-                rough_style,
-            } => {
-                let half_width = size[0] / 2.0;
-                let half_height = size[1] / 2.0;
-                let x = pos[0] - position[0];
-                let y = pos[1] - position[1];
-                let distance =
-                    (half_width * y + half_height * x).abs() / (half_width + half_height);
-                distance <= half_width
-            }
-            DrawingElement::Arrow {
-                start, end, width, ..
-            } => self.point_to_line_distance(pos, *start, *end) <= width * 2.0,
-            DrawingElement::Stroke { points, width, .. } => {
-                for i in 0..points.len().saturating_sub(1) {
-                    if self.point_to_line_distance(pos, points[i], points[i + 1]) <= width * 2.0 {
-                        return true;
-                    }
-                }
-                false
-            }
-            DrawingElement::Line {
-                start, end, width, ..
-            } => self.point_to_line_distance(pos, *start, *end) <= width * 2.0,
         }
+        (snapped_dx, snapped_dy)
     }
 
-    fn get_element_position(&self, element: &DrawingElement) -> [f32; 2] {
-        match element {
-            DrawingElement::Text { position, .. } => *position,
-            DrawingElement::TextBox { pos, .. } => *pos,
-            DrawingElement::Rectangle { position, .. } => *position,
-            DrawingElement::Circle { center, .. } => *center,
-            DrawingElement::Diamond { position, .. } => *position,
-            DrawingElement::Arrow { start, .. } => *start,
-            DrawingElement::Stroke { points, .. } => {
-                if points.is_empty() {
-                    [0.0, 0.0]
-                } else {
-                    points[0]
-                }
-            }
-            DrawingElement::Line { start, .. } => *start,
-        }
+    fn snap_bounds(&self, bounds: ([f32; 2], [f32; 2])) -> ([f32; 2], [f32; 2]) {
+        let mut snapped = normalize_bounds(bounds);
+        snapped.0[0] = snap_to_grid(snapped.0[0]);
+        snapped.0[1] = snap_to_grid(snapped.0[1]);
+        snapped.1[0] = snap_to_grid(snapped.1[0]);
+        snapped.1[1] = snap_to_grid(snapped.1[1]);
+        snapped
     }
 
-    fn move_element(&mut self, idx: usize, orig_pos: [f32; 2], dx: f32, dy: f32) {
-        if let Some(element) = self.elements.get_mut(idx) {
-            match element {
-                DrawingElement::Text { position, .. } => {
-                    position[0] = orig_pos[0] + dx;
-                    position[1] = orig_pos[1] + dy;
-                }
-                DrawingElement::TextBox { pos, .. } => {
-                    pos[0] = orig_pos[0] + dx;
-                    pos[1] = orig_pos[1] + dy;
-                }
-                DrawingElement::Rectangle { position, .. } => {
-                    position[0] = orig_pos[0] + dx;
-                    position[1] = orig_pos[1] + dy;
-                }
-                DrawingElement::Circle { center, .. } => {
-                    center[0] = orig_pos[0] + dx;
-                    center[1] = orig_pos[1] + dy;
-                }
-                DrawingElement::Diamond { position, .. } => {
-                    position[0] = orig_pos[0] + dx;
-                    position[1] = orig_pos[1] + dy;
-                }
-                DrawingElement::Arrow { start, end, .. } => {
-                    let arrow_dx = end[0] - start[0];
-                    let arrow_dy = end[1] - start[1];
-                    start[0] = orig_pos[0] + dx;
-                    start[1] = orig_pos[1] + dy;
-                    end[0] = start[0] + arrow_dx;
-                    end[1] = start[1] + arrow_dy;
-                }
-                DrawingElement::Stroke { points, .. } => {
-                    if !points.is_empty() {
-                        let stroke_dx = orig_pos[0] + dx - points[0][0];
-                        let stroke_dy = orig_pos[1] + dy - points[0][1];
-                        for point in points.iter_mut() {
-                            point[0] += stroke_dx;
-                            point[1] += stroke_dy;
-                        }
-                    }
-                }
-                DrawingElement::Line { start, end, .. } => {
-                    let line_dx = end[0] - start[0];
-                    let line_dy = end[1] - start[1];
-                    start[0] = orig_pos[0] + dx;
-                    start[1] = orig_pos[1] + dy;
-                    end[0] = start[0] + line_dx;
-                    end[1] = start[1] + line_dy;
+    fn snap_candidates(&self, excluding: &[ElementId]) -> SnapCandidates {
+        let mut x_edges = Vec::new();
+        let mut y_edges = Vec::new();
+        for element in &self.elements {
+            if excluding.contains(&element.id) {
+                continue;
+            }
+            let bounds = element.bounding_box();
+            x_edges.extend([bounds.0[0], (bounds.0[0] + bounds.1[0]) * 0.5, bounds.1[0]]);
+            y_edges.extend([bounds.0[1], (bounds.0[1] + bounds.1[1]) * 0.5, bounds.1[1]]);
+        }
+        SnapCandidates { x_edges, y_edges }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ActionKind {
+    Move,
+    Modify,
+}
+
+#[derive(Clone, Copy)]
+enum HAlign {
+    Left,
+    Right,
+    CenterX,
+    CenterY,
+}
+
+struct SnapCandidates {
+    x_edges: Vec<f32>,
+    y_edges: Vec<f32>,
+}
+
+fn textbox_size(content: &str, font_size: f32) -> [f32; 2] {
+    let width = content
+        .lines()
+        .map(|line| line.chars().count() as f32 * font_size * 0.6)
+        .fold(font_size * 0.8, f32::max)
+        + 16.0;
+    let height = content.lines().count().max(1) as f32 * font_size * 1.2 + 16.0;
+    [width, height]
+}
+
+fn snap_to_grid(value: f32) -> f32 {
+    const GRID: f32 = 10.0;
+    (value / GRID).round() * GRID
+}
+
+fn snap_against_candidates(min: f32, max: f32, candidates: &[f32]) -> Option<f32> {
+    let center = (min + max) * 0.5;
+    let probes = [min, center, max];
+    let mut best: Option<f32> = None;
+    for probe in probes {
+        for candidate in candidates {
+            let delta = *candidate - probe;
+            if delta.abs() <= 8.0 {
+                match best {
+                    Some(best_delta) if best_delta.abs() <= delta.abs() => {}
+                    _ => best = Some(delta),
                 }
             }
         }
     }
+    best
+}
 
-    fn point_to_line_distance(
-        &self,
-        point: [f32; 2],
-        line_start: [f32; 2],
-        line_end: [f32; 2],
-    ) -> f32 {
-        let line_length_squared =
-            (line_end[0] - line_start[0]).powi(2) + (line_end[1] - line_start[1]).powi(2);
+fn normalize_bounds(bounds: ([f32; 2], [f32; 2])) -> ([f32; 2], [f32; 2]) {
+    (
+        [bounds.0[0].min(bounds.1[0]), bounds.0[1].min(bounds.1[1])],
+        [bounds.0[0].max(bounds.1[0]), bounds.0[1].max(bounds.1[1])],
+    )
+}
 
-        if line_length_squared == 0.0 {
-            return ((point[0] - line_start[0]).powi(2) + (point[1] - line_start[1]).powi(2))
-                .sqrt();
+fn bounds_intersect(a: ([f32; 2], [f32; 2]), b: ([f32; 2], [f32; 2])) -> bool {
+    a.0[0] <= b.1[0] && a.1[0] >= b.0[0] && a.0[1] <= b.1[1] && a.1[1] >= b.0[1]
+}
+
+fn apply_resize_handle(
+    bounds: ([f32; 2], [f32; 2]),
+    handle: ResizeHandle,
+    dx: f32,
+    dy: f32,
+) -> ([f32; 2], [f32; 2]) {
+    let mut min = bounds.0;
+    let mut max = bounds.1;
+    match handle {
+        ResizeHandle::NorthWest => {
+            min[0] += dx;
+            min[1] += dy;
         }
-
-        let t = ((point[0] - line_start[0]) * (line_end[0] - line_start[0])
-            + (point[1] - line_start[1]) * (line_end[1] - line_start[1]))
-            / line_length_squared;
-
-        let t = t.clamp(0.0, 1.0);
-
-        let projection = [
-            line_start[0] + t * (line_end[0] - line_start[0]),
-            line_start[1] + t * (line_end[1] - line_start[1]),
-        ];
-
-        ((point[0] - projection[0]).powi(2) + (point[1] - projection[1]).powi(2)).sqrt()
-    }
-
-    fn find_element_at_position(&self, pos: [f32; 2]) -> Option<usize> {
-        // Search in reverse order so we select the topmost (most recently drawn) element
-        for (index, element) in self.elements.iter().enumerate().rev() {
-            if self.is_element_at_position(element, pos) {
-                return Some(index);
-            }
+        ResizeHandle::North => {
+            min[1] += dy;
         }
-        None
-    }
-
-    /// Auto-save the current state. On WASM saves to localStorage, on native to autosave file.
-    fn autosave(&self) {
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.save_to_storage();
+        ResizeHandle::NorthEast => {
+            max[0] += dx;
+            min[1] += dy;
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Ok(path) = crate::platform::autosave_path() {
-                let doc = self.to_document();
-                if let Ok(json) = doc.to_json() {
-                    if let Err(e) = crate::platform::save_to_file(
-                        path.to_str().unwrap_or(""),
-                        &json,
-                    ) {
-                        log::warn!("Autosave failed: {}", e);
-                    }
-                }
-            }
+        ResizeHandle::East => {
+            max[0] += dx;
+        }
+        ResizeHandle::SouthEast => {
+            max[0] += dx;
+            max[1] += dy;
+        }
+        ResizeHandle::South => {
+            max[1] += dy;
+        }
+        ResizeHandle::SouthWest => {
+            min[0] += dx;
+            max[1] += dy;
+        }
+        ResizeHandle::West => {
+            min[0] += dx;
         }
     }
+    normalize_bounds((min, max))
 }

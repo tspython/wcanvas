@@ -26,7 +26,11 @@ pub fn save_file_dialog(default_name: &str) -> FileDialogResult {
 
 fn try_zenity_open() -> Option<String> {
     let output = Command::new("zenity")
-        .args(["--file-selection", "--title=Open Drawing", "--file-filter=*.wcanvas *.json"])
+        .args([
+            "--file-selection",
+            "--title=Open Drawing",
+            "--file-filter=*.wcanvas *.json",
+        ])
         .output()
         .ok()?;
 
@@ -77,7 +81,11 @@ fn try_kdialog_open() -> Option<String> {
 
 fn try_kdialog_save(default_name: &str) -> Option<String> {
     let output = Command::new("kdialog")
-        .args(["--getsavefilename", default_name, "*.wcanvas *.json|Drawing files"])
+        .args([
+            "--getsavefilename",
+            default_name,
+            "*.wcanvas *.json|Drawing files",
+        ])
         .output()
         .ok()?;
 

@@ -4,6 +4,7 @@ mod canvas;
 mod document;
 mod drawing;
 mod event_handler;
+mod history;
 mod math;
 mod platform;
 mod renderer;

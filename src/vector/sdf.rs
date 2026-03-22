@@ -132,10 +132,22 @@ impl SdfBatch {
         let fill_params = [fill_flag, 0.0, 0.0, 0.0];
 
         let corners = [
-            ([-extent[0], -extent[1]], [center[0] - extent[0], center[1] - extent[1]]),
-            ([ extent[0], -extent[1]], [center[0] + extent[0], center[1] - extent[1]]),
-            ([ extent[0],  extent[1]], [center[0] + extent[0], center[1] + extent[1]]),
-            ([-extent[0],  extent[1]], [center[0] - extent[0], center[1] + extent[1]]),
+            (
+                [-extent[0], -extent[1]],
+                [center[0] - extent[0], center[1] - extent[1]],
+            ),
+            (
+                [extent[0], -extent[1]],
+                [center[0] + extent[0], center[1] - extent[1]],
+            ),
+            (
+                [extent[0], extent[1]],
+                [center[0] + extent[0], center[1] + extent[1]],
+            ),
+            (
+                [-extent[0], extent[1]],
+                [center[0] - extent[0], center[1] + extent[1]],
+            ),
         ];
 
         for &(local, pos) in &corners {

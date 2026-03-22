@@ -52,11 +52,11 @@ impl Vertex {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SdfVertex {
-    pub position: [f32; 2],      // Canvas-space position of quad corner
-    pub local_pos: [f32; 2],     // Offset from shape center (for SDF evaluation)
-    pub color: [f32; 4],         // Shape color
-    pub shape_params: [f32; 4],  // [shape_type, half_width, half_height, stroke_width]
-    pub fill_params: [f32; 4],   // [fill_flag, unused, unused, unused]
+    pub position: [f32; 2],     // Canvas-space position of quad corner
+    pub local_pos: [f32; 2],    // Offset from shape center (for SDF evaluation)
+    pub color: [f32; 4],        // Shape color
+    pub shape_params: [f32; 4], // [shape_type, half_width, half_height, stroke_width]
+    pub fill_params: [f32; 4],  // [fill_flag, unused, unused, unused]
 }
 
 impl SdfVertex {
@@ -82,12 +82,14 @@ impl SdfVertex {
                     format: wgpu::VertexFormat::Float32x4, // color
                 },
                 wgpu::VertexAttribute {
-                    offset: (mem::size_of::<[f32; 2]>() * 2 + mem::size_of::<[f32; 4]>()) as wgpu::BufferAddress,
+                    offset: (mem::size_of::<[f32; 2]>() * 2 + mem::size_of::<[f32; 4]>())
+                        as wgpu::BufferAddress,
                     shader_location: 3,
                     format: wgpu::VertexFormat::Float32x4, // shape_params
                 },
                 wgpu::VertexAttribute {
-                    offset: (mem::size_of::<[f32; 2]>() * 2 + mem::size_of::<[f32; 4]>() * 2) as wgpu::BufferAddress,
+                    offset: (mem::size_of::<[f32; 2]>() * 2 + mem::size_of::<[f32; 4]>() * 2)
+                        as wgpu::BufferAddress,
                     shader_location: 4,
                     format: wgpu::VertexFormat::Float32x4, // fill_params
                 },
@@ -114,11 +116,12 @@ impl UiVertex {
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
-                    offset: (mem::size_of::<[f32; 2]>() + mem::size_of::<[f32; 4]>()) as wgpu::BufferAddress,
+                    offset: (mem::size_of::<[f32; 2]>() + mem::size_of::<[f32; 4]>())
+                        as wgpu::BufferAddress,
                     shader_location: 2,
                     format: wgpu::VertexFormat::Float32x2,
                 },
             ],
         }
     }
-} 
+}

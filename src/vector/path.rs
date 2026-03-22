@@ -12,14 +12,23 @@ pub struct Path {
 pub enum PathCommand {
     MoveTo([f32; 2]),
     LineTo([f32; 2]),
-    QuadTo { control: [f32; 2], end: [f32; 2] },
-    CubicTo { c1: [f32; 2], c2: [f32; 2], end: [f32; 2] },
+    QuadTo {
+        control: [f32; 2],
+        end: [f32; 2],
+    },
+    CubicTo {
+        c1: [f32; 2],
+        c2: [f32; 2],
+        end: [f32; 2],
+    },
     Close,
 }
 
 impl Path {
     pub fn new() -> Self {
-        Self { commands: Vec::new() }
+        Self {
+            commands: Vec::new(),
+        }
     }
 
     pub fn move_to(&mut self, p: [f32; 2]) -> &mut Self {
@@ -190,8 +199,14 @@ impl Path {
                         let tt = t * t;
                         let ttt = tt * t;
                         let p = [
-                            uuu * current[0] + 3.0 * uu * t * c1[0] + 3.0 * u * tt * c2[0] + ttt * end[0],
-                            uuu * current[1] + 3.0 * uu * t * c1[1] + 3.0 * u * tt * c2[1] + ttt * end[1],
+                            uuu * current[0]
+                                + 3.0 * uu * t * c1[0]
+                                + 3.0 * u * tt * c2[0]
+                                + ttt * end[0],
+                            uuu * current[1]
+                                + 3.0 * uu * t * c1[1]
+                                + 3.0 * u * tt * c2[1]
+                                + ttt * end[1],
                         ];
                         points.push(p);
                     }
@@ -215,7 +230,13 @@ impl Path {
         (len / 4.0).max(4.0).min(32.0) as u32
     }
 
-    fn cubic_steps(p0: [f32; 2], _p1: [f32; 2], _p2: [f32; 2], p3: [f32; 2], _tolerance: f32) -> u32 {
+    fn cubic_steps(
+        p0: [f32; 2],
+        _p1: [f32; 2],
+        _p2: [f32; 2],
+        p3: [f32; 2],
+        _tolerance: f32,
+    ) -> u32 {
         let dx = p3[0] - p0[0];
         let dy = p3[1] - p0[1];
         let len = (dx * dx + dy * dy).sqrt();

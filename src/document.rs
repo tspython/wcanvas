@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::drawing::DrawingElement;
+use crate::drawing::Element;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -9,7 +9,7 @@ pub struct Document {
     pub version: u32,
     pub name: String,
     pub canvas_view: CanvasViewState,
-    pub elements: Vec<DrawingElement>,
+    pub elements: Vec<Element>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -32,7 +32,7 @@ impl Document {
     }
 
     pub fn from_state(
-        elements: &[DrawingElement],
+        elements: &[Element],
         offset: [f32; 2],
         zoom: f32,
         name: Option<&str>,
@@ -57,7 +57,7 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drawing::DrawingElement;
+    use crate::drawing::{DrawingElement, Element, ElementId};
     use crate::rough::RoughOptions;
 
     #[test]
@@ -73,69 +73,101 @@ mod tests {
     #[test]
     fn test_document_with_all_element_types() {
         let elements = vec![
-            DrawingElement::Stroke {
-                points: vec![[0.0, 0.0], [10.0, 10.0], [20.0, 5.0]],
-                color: [0.0, 0.0, 0.0, 1.0],
-                width: 2.0,
+            Element {
+                id: ElementId(1),
+                group_id: None,
+                shape: DrawingElement::Stroke {
+                    points: vec![[0.0, 0.0], [10.0, 10.0], [20.0, 5.0]],
+                    color: [0.0, 0.0, 0.0, 1.0],
+                    width: 2.0,
+                },
             },
-            DrawingElement::Line {
-                start: [0.0, 0.0],
-                end: [100.0, 100.0],
-                color: [1.0, 0.0, 0.0, 1.0],
-                width: 3.0,
-                rough_style: Some(RoughOptions {
-                    roughness: 1.0,
-                    bowing: 1.0,
+            Element {
+                id: ElementId(2),
+                group_id: None,
+                shape: DrawingElement::Line {
+                    start: [0.0, 0.0],
+                    end: [100.0, 100.0],
+                    color: [1.0, 0.0, 0.0, 1.0],
+                    width: 3.0,
+                    rough_style: Some(RoughOptions {
+                        roughness: 1.0,
+                        bowing: 1.0,
+                        stroke_width: 2.0,
+                        seed: Some(42),
+                        ..RoughOptions::default()
+                    }),
+                },
+            },
+            Element {
+                id: ElementId(3),
+                group_id: None,
+                shape: DrawingElement::Rectangle {
+                    position: [50.0, 50.0],
+                    size: [200.0, 100.0],
+                    color: [0.0, 1.0, 0.0, 1.0],
+                    fill: true,
+                    stroke_width: 1.5,
+                    rough_style: None,
+                },
+            },
+            Element {
+                id: ElementId(4),
+                group_id: None,
+                shape: DrawingElement::Circle {
+                    center: [150.0, 150.0],
+                    radius: 75.0,
+                    color: [0.0, 0.0, 1.0, 1.0],
+                    fill: false,
                     stroke_width: 2.0,
-                    seed: Some(42),
-                    ..RoughOptions::default()
-                }),
+                    rough_style: None,
+                },
             },
-            DrawingElement::Rectangle {
-                position: [50.0, 50.0],
-                size: [200.0, 100.0],
-                color: [0.0, 1.0, 0.0, 1.0],
-                fill: true,
-                stroke_width: 1.5,
-                rough_style: None,
+            Element {
+                id: ElementId(5),
+                group_id: None,
+                shape: DrawingElement::Diamond {
+                    position: [300.0, 100.0],
+                    size: [80.0, 60.0],
+                    color: [1.0, 1.0, 0.0, 1.0],
+                    fill: false,
+                    stroke_width: 2.5,
+                    rough_style: None,
+                },
             },
-            DrawingElement::Circle {
-                center: [150.0, 150.0],
-                radius: 75.0,
-                color: [0.0, 0.0, 1.0, 1.0],
-                fill: false,
-                stroke_width: 2.0,
-                rough_style: None,
+            Element {
+                id: ElementId(6),
+                group_id: None,
+                shape: DrawingElement::Arrow {
+                    start: [10.0, 10.0],
+                    end: [200.0, 200.0],
+                    color: [0.5, 0.5, 0.5, 1.0],
+                    width: 2.0,
+                    rough_style: None,
+                },
             },
-            DrawingElement::Diamond {
-                position: [300.0, 100.0],
-                size: [80.0, 60.0],
-                color: [1.0, 1.0, 0.0, 1.0],
-                fill: false,
-                stroke_width: 2.5,
-                rough_style: None,
+            Element {
+                id: ElementId(7),
+                group_id: None,
+                shape: DrawingElement::Text {
+                    position: [100.0, 300.0],
+                    content: "Hello, wcanvas!".to_string(),
+                    color: [0.0, 0.0, 0.0, 1.0],
+                    size: 32.0,
+                },
             },
-            DrawingElement::Arrow {
-                start: [10.0, 10.0],
-                end: [200.0, 200.0],
-                color: [0.5, 0.5, 0.5, 1.0],
-                width: 2.0,
-                rough_style: None,
-            },
-            DrawingElement::Text {
-                position: [100.0, 300.0],
-                content: "Hello, wcanvas!".to_string(),
-                color: [0.0, 0.0, 0.0, 1.0],
-                size: 32.0,
-            },
-            DrawingElement::TextBox {
-                id: 1,
-                pos: [400.0, 200.0],
-                size: [150.0, 50.0],
-                content: "Editable text".to_string(),
-                color: [0.2, 0.2, 0.2, 1.0],
-                font_size: 16.0,
-                state: crate::drawing::BoxState::Idle,
+            Element {
+                id: ElementId(8),
+                group_id: None,
+                shape: DrawingElement::TextBox {
+                    id: 1,
+                    pos: [400.0, 200.0],
+                    size: [150.0, 50.0],
+                    content: "Editable text".to_string(),
+                    color: [0.2, 0.2, 0.2, 1.0],
+                    font_size: 16.0,
+                    state: crate::drawing::BoxState::Idle,
+                },
             },
         ];
 
