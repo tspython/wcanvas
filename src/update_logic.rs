@@ -1,11 +1,18 @@
 use crate::app_state::State;
-use crate::drawing::{DrawingElement, Element, ElementId};
+use crate::drawing::{DrawingElement, Element, ElementId, FillStyle};
 use crate::state::ResizeHandle;
 use crate::vector::path::Path;
 use crate::vector::sdf::SdfBatch;
 use crate::vector::style::StrokeStyle;
 use crate::vector::tessellator::PathTessellator;
 use wgpu::util::DeviceExt;
+
+/// Default hachure angle in degrees (matching Excalidraw's -41°).
+const HACHURE_ANGLE: f32 = -41.0;
+/// Gap multiplier relative to stroke width (Excalidraw uses ~4x).
+const HACHURE_GAP_MULTIPLIER: f32 = 4.0;
+/// Fill line weight multiplier relative to stroke width (Excalidraw uses ~0.5x).
+const FILL_WEIGHT_MULTIPLIER: f32 = 0.5;
 
 impl State {
     pub fn update(&mut self) {
@@ -30,6 +37,7 @@ impl State {
             &self.color_picker,
             (self.size.width as f32, self.size.height as f32),
             self.canvas.transform.scale,
+            self.current_fill_style,
         );
 
         if !ui_vertices.is_empty() {
@@ -223,11 +231,21 @@ impl State {
                 position,
                 size,
                 color,
-                fill,
+                fill_style,
                 stroke_width,
                 rough_style,
             } => {
                 if let Some(rough_options) = rough_style {
+                    // Hachure/CrossHatch fill for rough shapes
+                    Self::tessellate_rect_fill(
+                        *fill_style,
+                        *position,
+                        *size,
+                        *color,
+                        *stroke_width,
+                        rough_options,
+                        tess,
+                    );
                     // Rough style: tessellate the rough path segments
                     let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                     let rough_lines = generator.rough_rectangle(*position, *size, rough_options);
@@ -237,8 +255,33 @@ impl State {
                         tess.stroke(&path, &style);
                     }
                 } else {
-                    // Clean shape: SDF vector rendering
-                    sdf_batch.add_rect(*position, *size, *color, *stroke_width, *fill);
+                    // For clean SDF shapes, hachure/cross-hatch are tessellated,
+                    // solid fill is handled by the SDF shader
+                    if *fill_style == FillStyle::Hachure || *fill_style == FillStyle::CrossHatch {
+                        let default_rough = crate::rough::RoughOptions {
+                            roughness: 0.5,
+                            stroke_width: *stroke_width,
+                            seed: Some(position_seed(*position)),
+                            ..Default::default()
+                        };
+                        Self::tessellate_rect_fill(
+                            *fill_style,
+                            *position,
+                            *size,
+                            *color,
+                            *stroke_width,
+                            &default_rough,
+                            tess,
+                        );
+                    }
+                    // SDF handles stroke (and solid fill)
+                    sdf_batch.add_rect(
+                        *position,
+                        *size,
+                        *color,
+                        *stroke_width,
+                        *fill_style == FillStyle::Solid,
+                    );
                 }
             }
 
@@ -246,11 +289,21 @@ impl State {
                 center,
                 radius,
                 color,
-                fill,
+                fill_style,
                 stroke_width,
                 rough_style,
             } => {
                 if let Some(rough_options) = rough_style {
+                    // Hachure/CrossHatch fill for rough circles
+                    Self::tessellate_ellipse_fill(
+                        *fill_style,
+                        *center,
+                        *radius,
+                        *color,
+                        *stroke_width,
+                        rough_options,
+                        tess,
+                    );
                     let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                     let diameter = *radius * 2.0;
                     let rough_lines =
@@ -261,8 +314,30 @@ impl State {
                         tess.stroke(&path, &style);
                     }
                 } else {
-                    // Clean shape: SDF vector rendering
-                    sdf_batch.add_circle(*center, *radius, *color, *stroke_width, *fill);
+                    if *fill_style == FillStyle::Hachure || *fill_style == FillStyle::CrossHatch {
+                        let default_rough = crate::rough::RoughOptions {
+                            roughness: 0.5,
+                            stroke_width: *stroke_width,
+                            seed: Some(center[0].to_bits() as u64 ^ center[1].to_bits() as u64),
+                            ..Default::default()
+                        };
+                        Self::tessellate_ellipse_fill(
+                            *fill_style,
+                            *center,
+                            *radius,
+                            *color,
+                            *stroke_width,
+                            &default_rough,
+                            tess,
+                        );
+                    }
+                    sdf_batch.add_circle(
+                        *center,
+                        *radius,
+                        *color,
+                        *stroke_width,
+                        *fill_style == FillStyle::Solid,
+                    );
                 }
             }
 
@@ -270,11 +345,21 @@ impl State {
                 position,
                 size,
                 color,
-                fill,
+                fill_style,
                 stroke_width,
                 rough_style,
             } => {
                 if let Some(rough_options) = rough_style {
+                    // Hachure/CrossHatch fill for rough diamonds
+                    Self::tessellate_diamond_fill(
+                        *fill_style,
+                        *position,
+                        *size,
+                        *color,
+                        *stroke_width,
+                        rough_options,
+                        tess,
+                    );
                     let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                     let rough_lines = generator.rough_diamond(*position, *size, rough_options);
                     let style = StrokeStyle::new(*color, rough_options.stroke_width);
@@ -283,8 +368,30 @@ impl State {
                         tess.stroke(&path, &style);
                     }
                 } else {
-                    // Clean shape: SDF vector rendering
-                    sdf_batch.add_diamond(*position, *size, *color, *stroke_width, *fill);
+                    if *fill_style == FillStyle::Hachure || *fill_style == FillStyle::CrossHatch {
+                        let default_rough = crate::rough::RoughOptions {
+                            roughness: 0.5,
+                            stroke_width: *stroke_width,
+                            seed: Some(position_seed(*position)),
+                            ..Default::default()
+                        };
+                        Self::tessellate_diamond_fill(
+                            *fill_style,
+                            *position,
+                            *size,
+                            *color,
+                            *stroke_width,
+                            &default_rough,
+                            tess,
+                        );
+                    }
+                    sdf_batch.add_diamond(
+                        *position,
+                        *size,
+                        *color,
+                        *stroke_width,
+                        *fill_style == FillStyle::Solid,
+                    );
                 }
             }
 
@@ -340,6 +447,160 @@ impl State {
             DrawingElement::Text { .. } | DrawingElement::TextBox { .. } => {
                 // Text is handled by the text renderer
             }
+        }
+    }
+
+    /// Tessellate hachure/cross-hatch fill for a rectangle.
+    fn tessellate_rect_fill(
+        fill_style: FillStyle,
+        position: [f32; 2],
+        size: [f32; 2],
+        color: [f32; 4],
+        stroke_width: f32,
+        rough_options: &crate::rough::RoughOptions,
+        tess: &mut PathTessellator,
+    ) {
+        if fill_style == FillStyle::None {
+            return;
+        }
+        if fill_style == FillStyle::Solid {
+            // Solid fill for rough shapes: fill the polygon
+            let polygon = [
+                position,
+                [position[0] + size[0], position[1]],
+                [position[0] + size[0], position[1] + size[1]],
+                [position[0], position[1] + size[1]],
+            ];
+            let fill_color = [color[0], color[1], color[2], color[3] * 0.35];
+            tess.fill_convex(&polygon, fill_color);
+            return;
+        }
+
+        let polygon = vec![
+            position,
+            [position[0] + size[0], position[1]],
+            [position[0] + size[0], position[1] + size[1]],
+            [position[0], position[1] + size[1]],
+        ];
+        let gap = stroke_width * HACHURE_GAP_MULTIPLIER;
+        let fill_weight = stroke_width * FILL_WEIGHT_MULTIPLIER;
+        let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
+
+        let fill_lines = match fill_style {
+            FillStyle::Hachure => {
+                generator.hachure_fill(&polygon, HACHURE_ANGLE, gap, fill_weight, rough_options)
+            }
+            FillStyle::CrossHatch => {
+                generator.cross_hatch_fill(&polygon, HACHURE_ANGLE, gap, fill_weight, rough_options)
+            }
+            _ => return,
+        };
+
+        let fill_color = [color[0], color[1], color[2], color[3] * 0.7];
+        let style = StrokeStyle::new(fill_color, fill_weight.max(0.5));
+        for line_points in fill_lines {
+            let path = Path::from_points(&line_points);
+            tess.stroke(&path, &style);
+        }
+    }
+
+    /// Tessellate hachure/cross-hatch fill for a circle/ellipse.
+    fn tessellate_ellipse_fill(
+        fill_style: FillStyle,
+        center: [f32; 2],
+        radius: f32,
+        color: [f32; 4],
+        stroke_width: f32,
+        rough_options: &crate::rough::RoughOptions,
+        tess: &mut PathTessellator,
+    ) {
+        if fill_style == FillStyle::None {
+            return;
+        }
+        // Approximate the circle/ellipse as a polygon for scanline fill
+        let segments = 32;
+        let polygon: Vec<[f32; 2]> = (0..segments)
+            .map(|i| {
+                let angle = (i as f32 / segments as f32) * std::f32::consts::PI * 2.0;
+                [center[0] + radius * angle.cos(), center[1] + radius * angle.sin()]
+            })
+            .collect();
+
+        if fill_style == FillStyle::Solid {
+            let fill_color = [color[0], color[1], color[2], color[3] * 0.35];
+            tess.fill_convex(&polygon, fill_color);
+            return;
+        }
+
+        let gap = stroke_width * HACHURE_GAP_MULTIPLIER;
+        let fill_weight = stroke_width * FILL_WEIGHT_MULTIPLIER;
+        let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
+
+        let fill_lines = match fill_style {
+            FillStyle::Hachure => {
+                generator.hachure_fill(&polygon, HACHURE_ANGLE, gap, fill_weight, rough_options)
+            }
+            FillStyle::CrossHatch => {
+                generator.cross_hatch_fill(&polygon, HACHURE_ANGLE, gap, fill_weight, rough_options)
+            }
+            _ => return,
+        };
+
+        let fill_color = [color[0], color[1], color[2], color[3] * 0.7];
+        let style = StrokeStyle::new(fill_color, fill_weight.max(0.5));
+        for line_points in fill_lines {
+            let path = Path::from_points(&line_points);
+            tess.stroke(&path, &style);
+        }
+    }
+
+    /// Tessellate hachure/cross-hatch fill for a diamond.
+    fn tessellate_diamond_fill(
+        fill_style: FillStyle,
+        position: [f32; 2],
+        size: [f32; 2],
+        color: [f32; 4],
+        stroke_width: f32,
+        rough_options: &crate::rough::RoughOptions,
+        tess: &mut PathTessellator,
+    ) {
+        if fill_style == FillStyle::None {
+            return;
+        }
+        let cx = position[0] + size[0] / 2.0;
+        let cy = position[1] + size[1] / 2.0;
+        let polygon = vec![
+            [cx, position[1]],
+            [position[0] + size[0], cy],
+            [cx, position[1] + size[1]],
+            [position[0], cy],
+        ];
+
+        if fill_style == FillStyle::Solid {
+            let fill_color = [color[0], color[1], color[2], color[3] * 0.35];
+            tess.fill_convex(&polygon, fill_color);
+            return;
+        }
+
+        let gap = stroke_width * HACHURE_GAP_MULTIPLIER;
+        let fill_weight = stroke_width * FILL_WEIGHT_MULTIPLIER;
+        let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
+
+        let fill_lines = match fill_style {
+            FillStyle::Hachure => {
+                generator.hachure_fill(&polygon, HACHURE_ANGLE, gap, fill_weight, rough_options)
+            }
+            FillStyle::CrossHatch => {
+                generator.cross_hatch_fill(&polygon, HACHURE_ANGLE, gap, fill_weight, rough_options)
+            }
+            _ => return,
+        };
+
+        let fill_color = [color[0], color[1], color[2], color[3] * 0.7];
+        let style = StrokeStyle::new(fill_color, fill_weight.max(0.5));
+        for line_points in fill_lines {
+            let path = Path::from_points(&line_points);
+            tess.stroke(&path, &style);
         }
     }
 
@@ -438,4 +699,9 @@ pub fn handle_positions(
         (ResizeHandle::SouthWest, [min[0], max[1]]),
         (ResizeHandle::West, [min[0], center_y]),
     ])
+}
+
+/// Derive a deterministic seed from a position for reproducible hachure patterns.
+fn position_seed(pos: [f32; 2]) -> u64 {
+    pos[0].to_bits() as u64 ^ (pos[1].to_bits() as u64).rotate_left(32)
 }

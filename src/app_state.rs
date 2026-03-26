@@ -1,6 +1,6 @@
 use crate::canvas::{CanvasTransform, Uniforms};
 use crate::document::Document;
-use crate::drawing::{Element, ElementId, Tool, sync_id_counters};
+use crate::drawing::{Element, ElementId, FillStyle, Tool, sync_id_counters};
 use crate::history::{Action, History};
 use crate::state::{
     Canvas, ColorPickerState, GeometryBuffers, GpuContext, InputState, SdfBuffers, SelectionState,
@@ -40,6 +40,7 @@ pub struct State {
     pub current_color: [f32; 4],
     pub color_picker: ColorPickerState,
     pub stroke_width: f32,
+    pub current_fill_style: FillStyle,
     pub clipboard: Vec<Element>,
 
     pub ui_renderer: UiRenderer,
@@ -425,6 +426,7 @@ impl State {
             current_color: [0.0, 0.0, 0.0, 1.0],
             color_picker: ColorPickerState::new(),
             stroke_width: 2.0,
+            current_fill_style: FillStyle::None,
             clipboard: Vec::new(),
             ui_renderer,
             text_renderer,

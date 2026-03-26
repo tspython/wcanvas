@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::drawing::Element;
+use crate::drawing::{Element, FillStyle};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -106,7 +106,7 @@ mod tests {
                     position: [50.0, 50.0],
                     size: [200.0, 100.0],
                     color: [0.0, 1.0, 0.0, 1.0],
-                    fill: true,
+                    fill_style: FillStyle::Solid,
                     stroke_width: 1.5,
                     rough_style: None,
                 },
@@ -118,7 +118,7 @@ mod tests {
                     center: [150.0, 150.0],
                     radius: 75.0,
                     color: [0.0, 0.0, 1.0, 1.0],
-                    fill: false,
+                    fill_style: FillStyle::None,
                     stroke_width: 2.0,
                     rough_style: None,
                 },
@@ -130,7 +130,7 @@ mod tests {
                     position: [300.0, 100.0],
                     size: [80.0, 60.0],
                     color: [1.0, 1.0, 0.0, 1.0],
-                    fill: false,
+                    fill_style: FillStyle::None,
                     stroke_width: 2.5,
                     rough_style: None,
                 },

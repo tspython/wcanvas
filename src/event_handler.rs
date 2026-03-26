@@ -1,9 +1,9 @@
 use crate::app_state::State;
-use crate::drawing::{BoxState, DrawingElement, Element, ElementId, GroupId, Tool};
+use crate::drawing::{BoxState, DrawingElement, Element, ElementId, FillStyle, GroupId, Tool};
 use crate::history::Action;
 use crate::state::ResizeHandle;
 use crate::state::UserInputState::{Dragging, Drawing, Idle, MarqueeSelecting, Panning, Resizing};
-use crate::ui::ColorInteraction;
+use crate::ui::{ColorInteraction, FillInteraction};
 use crate::update_logic::handle_positions;
 use rand::Rng;
 use winit::event::*;
@@ -151,10 +151,25 @@ impl State {
             }
         }
 
+        match self.ui_renderer.handle_fill_interaction(
+            self.input.mouse_pos,
+            self.current_tool,
+            (self.size.width as f32, self.size.height as f32),
+        ) {
+            FillInteraction::None => {}
+            FillInteraction::SelectFill(style) => {
+                self.current_fill_style = style;
+                // Also apply to selected elements
+                self.set_fill_style_on_selection(style);
+                return true;
+            }
+        }
+
         if self.ui_renderer.is_mouse_over_ui(
             self.input.mouse_pos,
             (self.size.width as f32, self.size.height as f32),
             &self.color_picker,
+            self.current_tool,
         ) || self.is_mouse_in_titlebar(self.input.mouse_pos)
         {
             return true;
@@ -253,6 +268,7 @@ impl State {
                 self.input.mouse_pos,
                 (self.size.width as f32, self.size.height as f32),
                 &self.color_picker,
+                self.current_tool,
             ) || self.is_mouse_in_titlebar(self.input.mouse_pos)
             {
                 self.finish_drawing();
@@ -320,7 +336,7 @@ impl State {
                 }
             }
             KeyCode::KeyF => {
-                self.toggle_fill_on_selection();
+                self.cycle_fill_on_selection();
                 true
             }
             KeyCode::BracketLeft => {
@@ -829,7 +845,27 @@ impl State {
         }
     }
 
-    fn toggle_fill_on_selection(&mut self) {
+    fn cycle_fill_on_selection(&mut self) {
+        let ids = self.input.selection.selected_ids.clone();
+        if ids.is_empty() {
+            // Cycle the default fill style when nothing is selected
+            self.current_fill_style = self.current_fill_style.next();
+            return;
+        }
+        let before = self.snapshot_elements(&ids);
+        let mut changed = false;
+        for id in &ids {
+            if let Some(element) = self.find_element_mut_by_id(*id) {
+                changed |= element.shape.cycle_fill_style();
+            }
+        }
+        if changed {
+            let after = self.snapshot_elements(&ids);
+            self.record_action(Action::ModifyProperty { before, after });
+        }
+    }
+
+    fn set_fill_style_on_selection(&mut self, style: FillStyle) {
         let ids = self.input.selection.selected_ids.clone();
         if ids.is_empty() {
             return;
@@ -838,7 +874,7 @@ impl State {
         let mut changed = false;
         for id in &ids {
             if let Some(element) = self.find_element_mut_by_id(*id) {
-                changed |= element.shape.toggle_fill();
+                changed |= element.shape.set_fill_style(style);
             }
         }
         if changed {
@@ -1200,7 +1236,7 @@ impl State {
                     position,
                     size,
                     color: self.current_color,
-                    fill: false,
+                    fill_style: self.current_fill_style,
                     stroke_width: self.stroke_width,
                     rough_style: Some(rough_style),
                 })
@@ -1215,7 +1251,7 @@ impl State {
                         center: start,
                         radius,
                         color: self.current_color,
-                        fill: false,
+                        fill_style: self.current_fill_style,
                         stroke_width: self.stroke_width,
                         rough_style: Some(rough_options),
                     }))
@@ -1230,7 +1266,7 @@ impl State {
                     position,
                     size,
                     color: self.current_color,
-                    fill: false,
+                    fill_style: self.current_fill_style,
                     stroke_width: self.stroke_width,
                     rough_style: Some(rough_style),
                 })
@@ -1331,7 +1367,7 @@ impl State {
                             self.current_color[2],
                             0.5,
                         ],
-                        fill: false,
+                        fill_style: self.current_fill_style,
                         stroke_width: self.stroke_width,
                         rough_style: None,
                     });
@@ -1350,7 +1386,7 @@ impl State {
                             self.current_color[2],
                             0.5,
                         ],
-                        fill: false,
+                        fill_style: self.current_fill_style,
                         stroke_width: self.stroke_width,
                         rough_style: None,
                     });
@@ -1404,7 +1440,7 @@ impl State {
                             self.current_color[2],
                             0.5,
                         ],
-                        fill: false,
+                        fill_style: self.current_fill_style,
                         stroke_width: self.stroke_width,
                         rough_style: None,
                     });

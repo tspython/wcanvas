@@ -1,5 +1,5 @@
 use crate::{
-    drawing::Tool,
+    drawing::{FillStyle, Tool},
     state::{ColorPickerDragMode, ColorPickerState},
     vertex::UiVertex,
 };
@@ -49,6 +49,11 @@ pub enum ColorInteraction {
     Color([f32; 4]),
     TogglePicker,
     BeginDrag(ColorPickerDragMode, [f32; 4]),
+}
+
+pub enum FillInteraction {
+    None,
+    SelectFill(FillStyle),
 }
 
 #[derive(Clone, Copy)]
@@ -165,6 +170,27 @@ impl UiLayout {
             self.picker_origin[0] + self.picker_size[0] * 0.5,
             self.picker_origin[1] + self.picker_size[1] * 0.5,
         ]
+    }
+
+    /// Fill style panel: positioned on the right side of the screen.
+    fn fill_panel_origin(&self) -> [f32; 2] {
+        [
+            self.screen_size.0 - self.edge_padding - self.fill_panel_size()[0],
+            self.palette_origin[1],
+        ]
+    }
+
+    fn fill_panel_size(&self) -> [f32; 2] {
+        let btn_size = self.fill_button_size();
+        let padding = (btn_size * 0.3).clamp(6.0, 12.0);
+        [
+            btn_size * 2.0 + padding + padding * 2.0,
+            btn_size * 2.0 + padding + padding * 2.0,
+        ]
+    }
+
+    fn fill_button_size(&self) -> f32 {
+        (self.swatch_size * 0.9).clamp(28.0, 48.0)
     }
 
     fn zoom_center(&self) -> [f32; 2] {
@@ -1649,6 +1675,310 @@ impl UiRenderer {
         Some(hsv_to_rgb(picker.hue, saturation, value))
     }
 
+    /// Returns true if the given tool supports fill styles.
+    fn tool_supports_fill(tool: Tool) -> bool {
+        matches!(tool, Tool::Rectangle | Tool::Circle | Tool::Diamond)
+    }
+
+    /// Generate fill style panel (right side) when a shape tool is active.
+    fn generate_fill_panel(
+        &self,
+        vertices: &mut Vec<UiVertex>,
+        indices: &mut Vec<u16>,
+        index_offset: &mut u16,
+        current_tool: Tool,
+        current_fill_style: FillStyle,
+        screen_size: (f32, f32),
+    ) {
+        if !Self::tool_supports_fill(current_tool) {
+            return;
+        }
+
+        let layout = UiLayout::new(screen_size);
+        let origin = layout.fill_panel_origin();
+        let panel_size = layout.fill_panel_size();
+        let btn_size = layout.fill_button_size();
+        let padding = (btn_size * 0.3).clamp(6.0, 12.0);
+
+        // Panel background shadow
+        let panel_center = [
+            origin[0] + panel_size[0] * 0.5 + 2.0,
+            origin[1] + panel_size[1] * 0.5 + 2.0,
+        ];
+        self.create_rounded_rect(
+            vertices,
+            indices,
+            index_offset,
+            panel_center,
+            panel_size,
+            [0.0, 0.0, 0.0, 0.12],
+            8.0 * layout.scale,
+            0.0,
+        );
+
+        // Panel background
+        let panel_center = [
+            origin[0] + panel_size[0] * 0.5,
+            origin[1] + panel_size[1] * 0.5,
+        ];
+        self.create_rounded_rect(
+            vertices,
+            indices,
+            index_offset,
+            panel_center,
+            panel_size,
+            [0.96, 0.96, 0.97, 0.98],
+            8.0 * layout.scale,
+            1.5,
+        );
+
+        // 4 fill style buttons in a 2x2 grid: None, Hachure, CrossHatch, Solid
+        let styles = [
+            FillStyle::None,
+            FillStyle::Hachure,
+            FillStyle::CrossHatch,
+            FillStyle::Solid,
+        ];
+
+        for (i, &style) in styles.iter().enumerate() {
+            let col = (i % 2) as f32;
+            let row = (i / 2) as f32;
+            let cx = origin[0] + padding + btn_size * 0.5 + col * (btn_size + padding);
+            let cy = origin[1] + padding + btn_size * 0.5 + row * (btn_size + padding);
+
+            let is_selected = style == current_fill_style;
+
+            let btn_color = if is_selected {
+                [0.25, 0.55, 0.95, 1.0]
+            } else {
+                [0.85, 0.85, 0.87, 1.0]
+            };
+
+            self.create_rounded_rect(
+                vertices,
+                indices,
+                index_offset,
+                [cx, cy],
+                [btn_size, btn_size],
+                btn_color,
+                6.0 * layout.scale,
+                if is_selected { 0.0 } else { 1.0 },
+            );
+
+            let icon_color = if is_selected {
+                [1.0, 1.0, 1.0, 1.0]
+            } else {
+                [0.25, 0.25, 0.28, 1.0]
+            };
+
+            self.draw_fill_style_icon(
+                vertices,
+                indices,
+                index_offset,
+                style,
+                [cx, cy],
+                btn_size * 0.4,
+                icon_color,
+            );
+        }
+    }
+
+    /// Draw a small icon representing a fill style.
+    fn draw_fill_style_icon(
+        &self,
+        vertices: &mut Vec<UiVertex>,
+        indices: &mut Vec<u16>,
+        index_offset: &mut u16,
+        style: FillStyle,
+        center: [f32; 2],
+        size: f32,
+        color: [f32; 4],
+    ) {
+        let half = size * 0.5;
+        match style {
+            FillStyle::None => {
+                // Empty rectangle outline
+                let thickness = size * 0.15;
+                self.draw_rect_outline(
+                    vertices,
+                    indices,
+                    index_offset,
+                    center,
+                    [size, size * 0.7],
+                    thickness,
+                    color,
+                );
+            }
+            FillStyle::Hachure => {
+                // Rectangle with diagonal lines
+                let thickness = size * 0.12;
+                self.draw_rect_outline(
+                    vertices,
+                    indices,
+                    index_offset,
+                    center,
+                    [size, size * 0.7],
+                    thickness * 0.8,
+                    color,
+                );
+                // Diagonal hachure lines
+                let h = size * 0.35;
+                let line_w = size * 0.08;
+                for i in 0..3 {
+                    let offset_x = (i as f32 - 1.0) * size * 0.28;
+                    let x1 = center[0] + offset_x - h * 0.3;
+                    let y1 = center[1] - h;
+                    let x2 = center[0] + offset_x + h * 0.3;
+                    let y2 = center[1] + h;
+                    self.draw_line_segment(vertices, indices, index_offset, [x1, y1], [x2, y2], line_w, color);
+                }
+            }
+            FillStyle::CrossHatch => {
+                // Rectangle with cross-diagonal lines
+                let thickness = size * 0.12;
+                self.draw_rect_outline(
+                    vertices,
+                    indices,
+                    index_offset,
+                    center,
+                    [size, size * 0.7],
+                    thickness * 0.8,
+                    color,
+                );
+                let h = size * 0.35;
+                let line_w = size * 0.07;
+                // Forward diagonals
+                for i in 0..3 {
+                    let offset_x = (i as f32 - 1.0) * size * 0.28;
+                    let x1 = center[0] + offset_x - h * 0.3;
+                    let y1 = center[1] - h;
+                    let x2 = center[0] + offset_x + h * 0.3;
+                    let y2 = center[1] + h;
+                    self.draw_line_segment(vertices, indices, index_offset, [x1, y1], [x2, y2], line_w, color);
+                }
+                // Back diagonals
+                for i in 0..3 {
+                    let offset_x = (i as f32 - 1.0) * size * 0.28;
+                    let x1 = center[0] + offset_x + h * 0.3;
+                    let y1 = center[1] - h;
+                    let x2 = center[0] + offset_x - h * 0.3;
+                    let y2 = center[1] + h;
+                    self.draw_line_segment(vertices, indices, index_offset, [x1, y1], [x2, y2], line_w, color);
+                }
+            }
+            FillStyle::Solid => {
+                // Filled rectangle
+                self.create_simple_rect(
+                    vertices,
+                    indices,
+                    index_offset,
+                    center,
+                    [size, size * 0.7],
+                    color,
+                );
+            }
+        }
+    }
+
+    /// Draw a line segment as a quad (for fill style icons).
+    fn draw_line_segment(
+        &self,
+        vertices: &mut Vec<UiVertex>,
+        indices: &mut Vec<u16>,
+        index_offset: &mut u16,
+        p1: [f32; 2],
+        p2: [f32; 2],
+        width: f32,
+        color: [f32; 4],
+    ) {
+        let dx = p2[0] - p1[0];
+        let dy = p2[1] - p1[1];
+        let len = (dx * dx + dy * dy).sqrt();
+        if len <= 0.0 {
+            return;
+        }
+        let nx = -dy / len * width * 0.5;
+        let ny = dx / len * width * 0.5;
+
+        vertices.extend_from_slice(&[
+            UiVertex { position: [p1[0] - nx, p1[1] - ny], color, uv: [0.0, 0.0] },
+            UiVertex { position: [p1[0] + nx, p1[1] + ny], color, uv: [0.0, 0.0] },
+            UiVertex { position: [p2[0] + nx, p2[1] + ny], color, uv: [0.0, 0.0] },
+            UiVertex { position: [p2[0] - nx, p2[1] - ny], color, uv: [0.0, 0.0] },
+        ]);
+        indices.extend_from_slice(&[
+            *index_offset,
+            *index_offset + 1,
+            *index_offset + 2,
+            *index_offset,
+            *index_offset + 2,
+            *index_offset + 3,
+        ]);
+        *index_offset += 4;
+    }
+
+    /// Handle click on the fill style panel. Returns the selected FillStyle if clicked.
+    pub fn handle_fill_interaction(
+        &self,
+        mouse_pos: [f32; 2],
+        current_tool: Tool,
+        screen_size: (f32, f32),
+    ) -> FillInteraction {
+        if !Self::tool_supports_fill(current_tool) {
+            return FillInteraction::None;
+        }
+
+        let layout = UiLayout::new(screen_size);
+        let origin = layout.fill_panel_origin();
+        let btn_size = layout.fill_button_size();
+        let padding = (btn_size * 0.3).clamp(6.0, 12.0);
+
+        let styles = [
+            FillStyle::None,
+            FillStyle::Hachure,
+            FillStyle::CrossHatch,
+            FillStyle::Solid,
+        ];
+
+        for (i, &style) in styles.iter().enumerate() {
+            let col = (i % 2) as f32;
+            let row = (i / 2) as f32;
+            let x = origin[0] + padding + col * (btn_size + padding);
+            let y = origin[1] + padding + row * (btn_size + padding);
+
+            if mouse_pos[0] >= x
+                && mouse_pos[0] <= x + btn_size
+                && mouse_pos[1] >= y
+                && mouse_pos[1] <= y + btn_size
+            {
+                return FillInteraction::SelectFill(style);
+            }
+        }
+
+        FillInteraction::None
+    }
+
+    /// Check if mouse is over the fill panel area.
+    pub fn is_mouse_over_fill_panel(
+        &self,
+        mouse_pos: [f32; 2],
+        current_tool: Tool,
+        screen_size: (f32, f32),
+    ) -> bool {
+        if !Self::tool_supports_fill(current_tool) {
+            return false;
+        }
+
+        let layout = UiLayout::new(screen_size);
+        let origin = layout.fill_panel_origin();
+        let size = layout.fill_panel_size();
+
+        mouse_pos[0] >= origin[0]
+            && mouse_pos[0] <= origin[0] + size[0]
+            && mouse_pos[1] >= origin[1]
+            && mouse_pos[1] <= origin[1] + size[1]
+    }
+
     fn generate_zoom_indicator(
         &self,
         vertices: &mut Vec<UiVertex>,
@@ -1699,6 +2029,7 @@ impl UiRenderer {
         picker: &ColorPickerState,
         screen_size: (f32, f32),
         _zoom_level: f32,
+        current_fill_style: FillStyle,
     ) -> (Vec<UiVertex>, Vec<u16>) {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
@@ -1717,6 +2048,14 @@ impl UiRenderer {
             &mut indices,
             &mut index_offset,
             current_tool,
+            screen_size,
+        );
+        self.generate_fill_panel(
+            &mut vertices,
+            &mut indices,
+            &mut index_offset,
+            current_tool,
+            current_fill_style,
             screen_size,
         );
         self.generate_zoom_indicator(&mut vertices, &mut indices, &mut index_offset, screen_size);
@@ -1835,6 +2174,7 @@ impl UiRenderer {
         mouse_pos: [f32; 2],
         screen_size: (f32, f32),
         picker: &ColorPickerState,
+        current_tool: Tool,
     ) -> bool {
         let layout = UiLayout::new(screen_size);
         let toolbar_width = layout.toolbar_size[0];
@@ -1870,6 +2210,10 @@ impl UiRenderer {
             && mouse_pos[1] <= start_y + palette_height;
 
         if over_palette {
+            return true;
+        }
+
+        if self.is_mouse_over_fill_panel(mouse_pos, current_tool, screen_size) {
             return true;
         }
 
