@@ -104,6 +104,8 @@ pub enum DrawingElement {
     Rectangle {
         position: [f32; 2],
         size: [f32; 2],
+        #[serde(default)]
+        rotation: f32,
         color: [f32; 4],
         fill: bool,
         stroke_width: f32,
@@ -120,6 +122,8 @@ pub enum DrawingElement {
     Diamond {
         position: [f32; 2],
         size: [f32; 2],
+        #[serde(default)]
+        rotation: f32,
         color: [f32; 4],
         fill: bool,
         stroke_width: f32,
@@ -297,23 +301,34 @@ impl DrawingElement {
             DrawingElement::Rectangle {
                 position,
                 size,
-                stroke_width,
-                ..
-            }
-            | DrawingElement::Diamond {
-                position,
-                size,
+                rotation,
                 stroke_width,
                 ..
             } => {
                 let padding = *stroke_width + 4.0;
-                (
-                    [position[0] - padding, position[1] - padding],
-                    [
-                        position[0] + size[0] + padding,
-                        position[1] + size[1] + padding,
-                    ],
-                )
+                let corners = rectangle_corners(*position, *size, *rotation);
+                let (mut min, mut max) = bounds_from_points(&corners);
+                min[0] -= padding;
+                min[1] -= padding;
+                max[0] += padding;
+                max[1] += padding;
+                (min, max)
+            }
+            DrawingElement::Diamond {
+                position,
+                size,
+                rotation,
+                stroke_width,
+                ..
+            } => {
+                let padding = *stroke_width + 4.0;
+                let points = diamond_points(*position, *size, *rotation);
+                let (mut min, mut max) = bounds_from_points(&points);
+                min[0] -= padding;
+                min[1] -= padding;
+                max[0] += padding;
+                max[1] += padding;
+                (min, max)
             }
             DrawingElement::Circle {
                 center,
@@ -382,6 +397,64 @@ impl DrawingElement {
         }
     }
 
+    pub fn rotate_around(&mut self, pivot: [f32; 2], angle: f32) {
+        if angle.abs() <= f32::EPSILON {
+            return;
+        }
+
+        match self {
+            DrawingElement::Rectangle {
+                position,
+                size,
+                rotation,
+                ..
+            }
+            | DrawingElement::Diamond {
+                position,
+                size,
+                rotation,
+                ..
+            } => {
+                let center = [position[0] + size[0] * 0.5, position[1] + size[1] * 0.5];
+                let rotated_center = rotate_point(center, pivot, angle);
+                position[0] = rotated_center[0] - size[0] * 0.5;
+                position[1] = rotated_center[1] - size[1] * 0.5;
+                *rotation = normalize_rotation(*rotation + angle);
+            }
+            DrawingElement::Circle { center, .. } => {
+                *center = rotate_point(*center, pivot, angle);
+            }
+            DrawingElement::Arrow { start, end, .. } | DrawingElement::Line { start, end, .. } => {
+                *start = rotate_point(*start, pivot, angle);
+                *end = rotate_point(*end, pivot, angle);
+            }
+            DrawingElement::Stroke { points, .. } => {
+                for point in points {
+                    *point = rotate_point(*point, pivot, angle);
+                }
+            }
+            DrawingElement::Text {
+                position,
+                content,
+                size,
+                ..
+            } => {
+                let width = text_width(content, *size);
+                let height = *size * 1.2;
+                let center = [position[0] + width * 0.5, position[1] - height * 0.5];
+                let rotated_center = rotate_point(center, pivot, angle);
+                position[0] = rotated_center[0] - width * 0.5;
+                position[1] = rotated_center[1] + height * 0.5;
+            }
+            DrawingElement::TextBox { pos, size, .. } => {
+                let center = [pos[0] + size[0] * 0.5, pos[1] + size[1] * 0.5];
+                let rotated_center = rotate_point(center, pivot, angle);
+                pos[0] = rotated_center[0] - size[0] * 0.5;
+                pos[1] = rotated_center[1] - size[1] * 0.5;
+            }
+        }
+    }
+
     pub fn hit_test(&self, pos: [f32; 2]) -> bool {
         match self {
             DrawingElement::Text {
@@ -401,21 +474,30 @@ impl DrawingElement {
                 pos: element_pos,
                 size,
                 ..
-            }
-            | DrawingElement::Rectangle {
-                position: element_pos,
-                size,
-                ..
-            }
-            | DrawingElement::Diamond {
-                position: element_pos,
-                size,
-                ..
             } => {
                 pos[0] >= element_pos[0]
                     && pos[0] <= element_pos[0] + size[0]
                     && pos[1] >= element_pos[1]
                     && pos[1] <= element_pos[1] + size[1]
+            }
+            DrawingElement::Rectangle {
+                position,
+                size,
+                rotation,
+                ..
+            }
+            | DrawingElement::Diamond {
+                position,
+                size,
+                rotation,
+                ..
+            } => {
+                let center = [position[0] + size[0] * 0.5, position[1] + size[1] * 0.5];
+                let local = rotate_point(pos, center, -*rotation);
+                local[0] >= position[0]
+                    && local[0] <= position[0] + size[0]
+                    && local[1] >= position[1]
+                    && local[1] <= position[1] + size[1]
             }
             DrawingElement::Circle { center, radius, .. } => {
                 ((pos[0] - center[0]).powi(2) + (pos[1] - center[1]).powi(2)).sqrt() <= *radius
@@ -554,4 +636,69 @@ fn lock_bounds_to_aspect(
         new_bounds.0,
         [new_bounds.0[0] + width, new_bounds.0[1] + height],
     )
+}
+
+fn rotate_point(point: [f32; 2], pivot: [f32; 2], angle: f32) -> [f32; 2] {
+    let sin = angle.sin();
+    let cos = angle.cos();
+    let dx = point[0] - pivot[0];
+    let dy = point[1] - pivot[1];
+    [
+        pivot[0] + dx * cos - dy * sin,
+        pivot[1] + dx * sin + dy * cos,
+    ]
+}
+
+fn normalize_rotation(angle: f32) -> f32 {
+    let mut normalized = angle.rem_euclid(std::f32::consts::TAU);
+    if normalized > std::f32::consts::PI {
+        normalized -= std::f32::consts::TAU;
+    }
+    normalized
+}
+
+fn rectangle_corners(position: [f32; 2], size: [f32; 2], rotation: f32) -> [[f32; 2]; 4] {
+    let center = [position[0] + size[0] * 0.5, position[1] + size[1] * 0.5];
+    let mut corners = [
+        position,
+        [position[0] + size[0], position[1]],
+        [position[0] + size[0], position[1] + size[1]],
+        [position[0], position[1] + size[1]],
+    ];
+    if rotation.abs() > f32::EPSILON {
+        for corner in &mut corners {
+            *corner = rotate_point(*corner, center, rotation);
+        }
+    }
+    corners
+}
+
+fn diamond_points(position: [f32; 2], size: [f32; 2], rotation: f32) -> [[f32; 2]; 4] {
+    let center = [position[0] + size[0] * 0.5, position[1] + size[1] * 0.5];
+    let half_w = size[0] * 0.5;
+    let half_h = size[1] * 0.5;
+    let mut points = [
+        [center[0], center[1] - half_h],
+        [center[0] + half_w, center[1]],
+        [center[0], center[1] + half_h],
+        [center[0] - half_w, center[1]],
+    ];
+    if rotation.abs() > f32::EPSILON {
+        for point in &mut points {
+            *point = rotate_point(*point, center, rotation);
+        }
+    }
+    points
+}
+
+fn bounds_from_points(points: &[[f32; 2]]) -> ([f32; 2], [f32; 2]) {
+    let mut min = [f32::INFINITY, f32::INFINITY];
+    let mut max = [f32::NEG_INFINITY, f32::NEG_INFINITY];
+    for point in points {
+        min[0] = min[0].min(point[0]);
+        min[1] = min[1].min(point[1]);
+        max[0] = max[0].max(point[0]);
+        max[1] = max[1].max(point[1]);
+    }
+    (min, max)
 }

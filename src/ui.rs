@@ -4,6 +4,31 @@ use crate::{
     vertex::UiVertex,
 };
 
+#[derive(Clone)]
+struct SvgIcon {
+    view_box: [f32; 4],
+    primitives: Vec<SvgPrimitive>,
+}
+
+#[derive(Clone)]
+enum SvgPrimitive {
+    Polyline {
+        points: Vec<[f32; 2]>,
+        closed: bool,
+        stroke_width: f32,
+    },
+    Rect {
+        origin: [f32; 2],
+        size: [f32; 2],
+        stroke_width: f32,
+    },
+    Circle {
+        center: [f32; 2],
+        radius: f32,
+        stroke_width: f32,
+    },
+}
+
 const BASE_PALETTE_SWATCH_SIZE: f32 = 36.0;
 const BASE_PALETTE_PADDING: f32 = 10.0;
 const CUSTOM_SWATCH_LABEL: [f32; 4] = [0.16, 0.18, 0.22, 1.0];
@@ -39,9 +64,7 @@ struct ColorSwatch {
 
 struct ToolIcon {
     tool: Tool,
-    position: [f32; 2],
-    size: [f32; 2],
-    key_binding: &'static str,
+    svg: SvgIcon,
 }
 
 pub enum ColorInteraction {
@@ -199,57 +222,39 @@ impl UiRenderer {
         let tool_icons = vec![
             ToolIcon {
                 tool: Tool::Select,
-                position: [10.0, 10.0],
-                size: [40.0, 40.0],
-                key_binding: "1",
+                svg: load_toolbar_icon(include_str!("../data/icons/select.svg")),
             },
             ToolIcon {
                 tool: Tool::Pen,
-                position: [60.0, 10.0],
-                size: [40.0, 40.0],
-                key_binding: "2",
+                svg: load_toolbar_icon(include_str!("../data/icons/pen.svg")),
             },
             ToolIcon {
                 tool: Tool::Rectangle,
-                position: [110.0, 10.0],
-                size: [40.0, 40.0],
-                key_binding: "3",
+                svg: load_toolbar_icon(include_str!("../data/icons/rectangle.svg")),
             },
             ToolIcon {
                 tool: Tool::Circle,
-                position: [160.0, 10.0],
-                size: [40.0, 40.0],
-                key_binding: "4",
+                svg: load_toolbar_icon(include_str!("../data/icons/circle.svg")),
             },
             ToolIcon {
                 tool: Tool::Diamond,
-                position: [210.0, 10.0],
-                size: [40.0, 40.0],
-                key_binding: "5",
+                svg: load_toolbar_icon(include_str!("../data/icons/diamond.svg")),
             },
             ToolIcon {
                 tool: Tool::Arrow,
-                position: [260.0, 10.0],
-                size: [40.0, 40.0],
-                key_binding: "6",
+                svg: load_toolbar_icon(include_str!("../data/icons/arrow.svg")),
             },
             ToolIcon {
                 tool: Tool::Text,
-                position: [310.0, 10.0],
-                size: [40.0, 40.0],
-                key_binding: "7",
+                svg: load_toolbar_icon(include_str!("../data/icons/text.svg")),
             },
             ToolIcon {
                 tool: Tool::Line,
-                position: [360.0, 10.0],
-                size: [40.0, 40.0],
-                key_binding: "8",
+                svg: load_toolbar_icon(include_str!("../data/icons/line.svg")),
             },
             ToolIcon {
                 tool: Tool::Eraser,
-                position: [410.0, 10.0],
-                size: [40.0, 40.0],
-                key_binding: "9",
+                svg: load_toolbar_icon(include_str!("../data/icons/eraser.svg")),
             },
         ];
 
@@ -280,6 +285,129 @@ impl UiRenderer {
         Self {
             tool_icons,
             color_palette,
+        }
+    }
+
+    fn draw_svg_icon(
+        &self,
+        vertices: &mut Vec<UiVertex>,
+        indices: &mut Vec<u16>,
+        index_offset: &mut u16,
+        icon: &SvgIcon,
+        center: [f32; 2],
+        size: f32,
+        color: [f32; 4],
+    ) {
+        let scale = size / icon.view_box[2].max(icon.view_box[3]);
+        let view_box_center = [
+            icon.view_box[0] + icon.view_box[2] * 0.5,
+            icon.view_box[1] + icon.view_box[3] * 0.5,
+        ];
+
+        for primitive in &icon.primitives {
+            match primitive {
+                SvgPrimitive::Polyline {
+                    points,
+                    closed,
+                    stroke_width,
+                } => {
+                    self.draw_svg_polyline(
+                        vertices,
+                        indices,
+                        index_offset,
+                        points,
+                        *closed,
+                        *stroke_width * scale,
+                        center,
+                        view_box_center,
+                        scale,
+                        color,
+                    );
+                }
+                SvgPrimitive::Rect {
+                    origin,
+                    size,
+                    stroke_width,
+                } => {
+                    let local_center = [origin[0] + size[0] * 0.5, origin[1] + size[1] * 0.5];
+                    self.draw_rect_outline(
+                        vertices,
+                        indices,
+                        index_offset,
+                        transform_svg_point(local_center, center, view_box_center, scale),
+                        [size[0] * scale, size[1] * scale],
+                        *stroke_width * scale,
+                        color,
+                    );
+                }
+                SvgPrimitive::Circle {
+                    center: circle_center,
+                    radius,
+                    stroke_width,
+                } => {
+                    self.draw_smooth_circle_outline(
+                        vertices,
+                        indices,
+                        index_offset,
+                        transform_svg_point(*circle_center, center, view_box_center, scale),
+                        *radius * scale,
+                        *stroke_width * scale,
+                        color,
+                    );
+                }
+            }
+        }
+    }
+
+    fn draw_svg_polyline(
+        &self,
+        vertices: &mut Vec<UiVertex>,
+        indices: &mut Vec<u16>,
+        index_offset: &mut u16,
+        points: &[[f32; 2]],
+        closed: bool,
+        stroke_width: f32,
+        center: [f32; 2],
+        view_box_center: [f32; 2],
+        scale: f32,
+        color: [f32; 4],
+    ) {
+        if points.len() < 2 {
+            return;
+        }
+
+        let transformed_points: Vec<[f32; 2]> = points
+            .iter()
+            .map(|point| transform_svg_point(*point, center, view_box_center, scale))
+            .collect();
+
+        for segment in transformed_points.windows(2) {
+            self.draw_thick_line(
+                vertices,
+                indices,
+                index_offset,
+                segment[0],
+                segment[1],
+                stroke_width,
+                color,
+            );
+        }
+
+        if closed {
+            self.draw_thick_line(
+                vertices,
+                indices,
+                index_offset,
+                *transformed_points.last().unwrap(),
+                transformed_points[0],
+                stroke_width,
+                color,
+            );
+        }
+
+        let cap_radius = stroke_width * 0.5;
+        for &point in &transformed_points {
+            self.draw_filled_circle(vertices, indices, index_offset, point, cap_radius, color);
         }
     }
 
@@ -1449,13 +1577,13 @@ impl UiRenderer {
                 [0.2, 0.2, 0.2, 1.0]
             };
 
-            self.draw_tool_icon(
+            self.draw_svg_icon(
                 vertices,
                 indices,
                 index_offset,
-                icon.tool,
+                &icon.svg,
                 [x, y],
-                icon_size * 0.5,
+                icon_size * 0.62,
                 icon_color,
             );
         }
@@ -1939,6 +2067,127 @@ impl UiRenderer {
             text_renderer.add_screen_label(device, queue, icon_text, text_pos, 16.0, text_color);
         }
     }
+}
+
+fn load_toolbar_icon(svg: &str) -> SvgIcon {
+    parse_svg_icon(svg).unwrap_or_else(|err| panic!("failed to parse toolbar icon SVG: {err}"))
+}
+
+fn parse_svg_icon(svg: &str) -> Result<SvgIcon, String> {
+    let document = roxmltree::Document::parse(svg).map_err(|err| err.to_string())?;
+    let root = document.root_element();
+    let view_box = parse_view_box(
+        root.attribute("viewBox")
+            .ok_or_else(|| "missing viewBox attribute".to_string())?,
+    )?;
+    let default_stroke_width = root
+        .attribute("stroke-width")
+        .and_then(|value| value.parse::<f32>().ok())
+        .unwrap_or(2.0);
+
+    let mut primitives = Vec::new();
+
+    for node in root.children().filter(|child| child.is_element()) {
+        let stroke_width = node
+            .attribute("stroke-width")
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(default_stroke_width);
+
+        match node.tag_name().name() {
+            "line" => primitives.push(SvgPrimitive::Polyline {
+                points: vec![
+                    [parse_attr(&node, "x1")?, parse_attr(&node, "y1")?],
+                    [parse_attr(&node, "x2")?, parse_attr(&node, "y2")?],
+                ],
+                closed: false,
+                stroke_width,
+            }),
+            "polyline" => primitives.push(SvgPrimitive::Polyline {
+                points: parse_points(
+                    node.attribute("points")
+                        .ok_or_else(|| "polyline missing points".to_string())?,
+                )?,
+                closed: false,
+                stroke_width,
+            }),
+            "polygon" => primitives.push(SvgPrimitive::Polyline {
+                points: parse_points(
+                    node.attribute("points")
+                        .ok_or_else(|| "polygon missing points".to_string())?,
+                )?,
+                closed: true,
+                stroke_width,
+            }),
+            "rect" => primitives.push(SvgPrimitive::Rect {
+                origin: [parse_attr(&node, "x")?, parse_attr(&node, "y")?],
+                size: [parse_attr(&node, "width")?, parse_attr(&node, "height")?],
+                stroke_width,
+            }),
+            "circle" => primitives.push(SvgPrimitive::Circle {
+                center: [parse_attr(&node, "cx")?, parse_attr(&node, "cy")?],
+                radius: parse_attr(&node, "r")?,
+                stroke_width,
+            }),
+            unsupported => {
+                return Err(format!("unsupported SVG element: {unsupported}"));
+            }
+        }
+    }
+
+    Ok(SvgIcon {
+        view_box,
+        primitives,
+    })
+}
+
+fn parse_view_box(value: &str) -> Result<[f32; 4], String> {
+    let values: Vec<f32> = value
+        .split(|ch: char| ch == ',' || ch.is_ascii_whitespace())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.parse::<f32>().map_err(|err| err.to_string()))
+        .collect::<Result<_, _>>()?;
+
+    if values.len() != 4 {
+        return Err("viewBox must have 4 numbers".to_string());
+    }
+
+    Ok([values[0], values[1], values[2], values[3]])
+}
+
+fn parse_points(value: &str) -> Result<Vec<[f32; 2]>, String> {
+    let values: Vec<f32> = value
+        .split(|ch: char| ch == ',' || ch.is_ascii_whitespace())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.parse::<f32>().map_err(|err| err.to_string()))
+        .collect::<Result<_, _>>()?;
+
+    if values.len() < 4 || values.len() % 2 != 0 {
+        return Err("points must contain pairs of numbers".to_string());
+    }
+
+    Ok(values
+        .chunks_exact(2)
+        .map(|chunk| [chunk[0], chunk[1]])
+        .collect())
+}
+
+fn parse_attr(node: &roxmltree::Node<'_, '_>, name: &str) -> Result<f32, String> {
+    node.attribute(name)
+        .ok_or_else(|| format!("missing {name} attribute"))?
+        .parse::<f32>()
+        .map_err(|err| err.to_string())
+}
+
+fn transform_svg_point(
+    point: [f32; 2],
+    center: [f32; 2],
+    view_box_center: [f32; 2],
+    scale: f32,
+) -> [f32; 2] {
+    [
+        center[0] + (point[0] - view_box_center[0]) * scale,
+        center[1] + (point[1] - view_box_center[1]) * scale,
+    ]
 }
 
 fn point_in_rect(point: [f32; 2], origin: [f32; 2], size: [f32; 2]) -> bool {

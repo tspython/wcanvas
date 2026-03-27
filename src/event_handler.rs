@@ -2,9 +2,11 @@ use crate::app_state::State;
 use crate::drawing::{BoxState, DrawingElement, Element, ElementId, GroupId, Tool};
 use crate::history::Action;
 use crate::state::ResizeHandle;
-use crate::state::UserInputState::{Dragging, Drawing, Idle, MarqueeSelecting, Panning, Resizing};
+use crate::state::UserInputState::{
+    Dragging, Drawing, Idle, MarqueeSelecting, Panning, Resizing, Rotating,
+};
 use crate::ui::ColorInteraction;
-use crate::update_logic::handle_positions;
+use crate::update_logic::{handle_positions, rotation_handle_position};
 use rand::Rng;
 use winit::event::*;
 use winit::keyboard::KeyCode;
@@ -215,6 +217,12 @@ impl State {
                 self.input.selection.active_handle = None;
                 self.input.selection.resize_bounds = None;
             }
+            Rotating => {
+                self.input.state = Idle;
+                self.finish_transform(ActionKind::Modify);
+                self.input.selection.rotate_pivot = None;
+                self.input.selection.rotate_start_angle = None;
+            }
             MarqueeSelecting => {
                 self.finish_marquee_selection();
                 self.input.state = Idle;
@@ -277,6 +285,10 @@ impl State {
             }
             Resizing => {
                 self.resize_selection_to(canvas_pos);
+                true
+            }
+            Rotating => {
+                self.rotate_selection_to(canvas_pos);
                 true
             }
             MarqueeSelecting => {
@@ -516,9 +528,24 @@ impl State {
 
     fn handle_select_press(&mut self, canvas_pos: [f32; 2]) -> bool {
         if let Some(bounds) = self.selection_bounds() {
+            if self.hit_rotation_handle(bounds, canvas_pos) {
+                let pivot = selection_center(bounds);
+                self.input.state = Rotating;
+                self.input.selection.active_handle = None;
+                self.input.selection.resize_bounds = None;
+                self.input.selection.drag_origin = Some(canvas_pos);
+                self.input.selection.rotate_pivot = Some(pivot);
+                self.input.selection.rotate_start_angle = Some(point_angle_from(pivot, canvas_pos));
+                self.input.transform_snapshot =
+                    self.snapshot_elements(&self.input.selection.selected_ids);
+                return true;
+            }
+
             if let Some(handle) = self.hit_resize_handle(bounds, canvas_pos) {
                 self.input.state = Resizing;
                 self.input.selection.active_handle = Some(handle);
+                self.input.selection.rotate_pivot = None;
+                self.input.selection.rotate_start_angle = None;
                 self.input.selection.drag_origin = Some(canvas_pos);
                 self.input.selection.resize_bounds = Some(bounds);
                 self.input.transform_snapshot =
@@ -555,6 +582,10 @@ impl State {
             }
 
             self.input.selection.drag_origin = Some(canvas_pos);
+            self.input.selection.active_handle = None;
+            self.input.selection.resize_bounds = None;
+            self.input.selection.rotate_pivot = None;
+            self.input.selection.rotate_start_angle = None;
             self.input.transform_snapshot =
                 self.snapshot_elements(&self.input.selection.selected_ids);
             self.input.state = Dragging;
@@ -565,6 +596,10 @@ impl State {
         self.input.state = MarqueeSelecting;
         self.input.selection.marquee_start = Some(canvas_pos);
         self.input.selection.marquee_current = Some(canvas_pos);
+        self.input.selection.active_handle = None;
+        self.input.selection.resize_bounds = None;
+        self.input.selection.rotate_pivot = None;
+        self.input.selection.rotate_start_angle = None;
         if !self.input.modifiers.shift_key() {
             self.set_selection(Vec::new());
         }
@@ -608,6 +643,28 @@ impl State {
                 element
                     .shape
                     .resize_to_bounds(start_bounds, snapped, lock_aspect);
+            }
+        }
+    }
+
+    fn rotate_selection_to(&mut self, canvas_pos: [f32; 2]) {
+        let Some(pivot) = self.input.selection.rotate_pivot else {
+            return;
+        };
+        let Some(start_angle) = self.input.selection.rotate_start_angle else {
+            return;
+        };
+
+        let mut delta = normalize_angle_delta(point_angle_from(pivot, canvas_pos) - start_angle);
+        if self.input.modifiers.shift_key() {
+            let snap_step = std::f32::consts::PI / 12.0;
+            delta = (delta / snap_step).round() * snap_step;
+        }
+
+        for snapshot in self.input.transform_snapshot.clone() {
+            if let Some(element) = self.find_element_mut_by_id(snapshot.id) {
+                *element = snapshot.clone();
+                element.shape.rotate_around(pivot, delta);
             }
         }
     }
@@ -1107,6 +1164,13 @@ impl State {
         None
     }
 
+    fn hit_rotation_handle(&self, bounds: ([f32; 2], [f32; 2]), pos: [f32; 2]) -> bool {
+        let handle_pos = rotation_handle_position(bounds);
+        let dx = pos[0] - handle_pos[0];
+        let dy = pos[1] - handle_pos[1];
+        (dx * dx + dy * dy) <= 12.0f32.powi(2)
+    }
+
     fn find_element_id_at_position(&self, pos: [f32; 2]) -> Option<ElementId> {
         self.elements
             .iter()
@@ -1199,6 +1263,7 @@ impl State {
                 self.shape_from_drag(|position, size, rough_style| DrawingElement::Rectangle {
                     position,
                     size,
+                    rotation: 0.0,
                     color: self.current_color,
                     fill: false,
                     stroke_width: self.stroke_width,
@@ -1229,6 +1294,7 @@ impl State {
                 self.shape_from_drag(|position, size, rough_style| DrawingElement::Diamond {
                     position,
                     size,
+                    rotation: 0.0,
                     color: self.current_color,
                     fill: false,
                     stroke_width: self.stroke_width,
@@ -1325,6 +1391,7 @@ impl State {
                     self.input.preview_element = Some(DrawingElement::Rectangle {
                         position,
                         size,
+                        rotation: 0.0,
                         color: [
                             self.current_color[0],
                             self.current_color[1],
@@ -1398,6 +1465,7 @@ impl State {
                     self.input.preview_element = Some(DrawingElement::Diamond {
                         position,
                         size,
+                        rotation: 0.0,
                         color: [
                             self.current_color[0],
                             self.current_color[1],
@@ -1520,6 +1588,25 @@ fn normalize_bounds(bounds: ([f32; 2], [f32; 2])) -> ([f32; 2], [f32; 2]) {
         [bounds.0[0].min(bounds.1[0]), bounds.0[1].min(bounds.1[1])],
         [bounds.0[0].max(bounds.1[0]), bounds.0[1].max(bounds.1[1])],
     )
+}
+
+fn selection_center(bounds: ([f32; 2], [f32; 2])) -> [f32; 2] {
+    [
+        (bounds.0[0] + bounds.1[0]) * 0.5,
+        (bounds.0[1] + bounds.1[1]) * 0.5,
+    ]
+}
+
+fn point_angle_from(center: [f32; 2], point: [f32; 2]) -> f32 {
+    (point[1] - center[1]).atan2(point[0] - center[0])
+}
+
+fn normalize_angle_delta(delta: f32) -> f32 {
+    let mut normalized = delta.rem_euclid(std::f32::consts::TAU);
+    if normalized > std::f32::consts::PI {
+        normalized -= std::f32::consts::TAU;
+    }
+    normalized
 }
 
 fn bounds_intersect(a: ([f32; 2], [f32; 2]), b: ([f32; 2], [f32; 2])) -> bool {

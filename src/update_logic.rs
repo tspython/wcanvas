@@ -22,6 +22,24 @@ impl State {
                 }
             }
         }
+
+        #[cfg(debug_assertions)]
+        {
+            self.fps_sample_frames = self.fps_sample_frames.saturating_add(1);
+            let elapsed = self.fps_sample_start.elapsed().as_secs_f32();
+            if elapsed >= 0.25 {
+                self.fps_value = self.fps_sample_frames as f32 / elapsed;
+                self.fps_sample_frames = 0;
+                cfg_if::cfg_if! {
+                    if #[cfg(target_arch = "wasm32")] {
+                        self.fps_sample_start = web_time::Instant::now();
+                    } else {
+                        self.fps_sample_start = std::time::Instant::now();
+                    }
+                }
+            }
+        }
+
         self.update_buffers();
 
         let (ui_vertices, ui_indices) = self.ui_renderer.generate_ui_vertices(
@@ -113,6 +131,26 @@ impl State {
             [1.0, 1.0, 1.0, 1.0],
         );
 
+        #[cfg(debug_assertions)]
+        {
+            let fps_text = format!("{:.0} FPS", self.fps_value.max(0.0));
+            let fps_size = (font_size * 2.8).clamp(36.0, 84.0);
+            let estimated_width = fps_text.chars().count() as f32 * fps_size * 0.6;
+            let margin = 28.0;
+            let fps_pos = [
+                self.size.width as f32 - estimated_width - margin,
+                margin + fps_size,
+            ];
+            self.text_renderer.add_screen_label(
+                &self.gpu.device,
+                &self.gpu.queue,
+                &fps_text,
+                fps_pos,
+                fps_size,
+                [0.0, 1.0, 0.0, 1.0],
+            );
+        }
+
         self.text_renderer.build_screen_buffers(&self.gpu.device);
     }
 
@@ -136,6 +174,7 @@ impl State {
         if let Some(bounds) = selection_bounds(&self.elements, &self.input.selection.selected_ids) {
             Self::tessellate_selection_highlight(bounds, &mut tess);
             Self::tessellate_resize_handles(bounds, &mut tess);
+            Self::tessellate_rotation_handle(bounds, &mut tess);
         }
 
         if let (Some(start), Some(current)) = (
@@ -222,20 +261,31 @@ impl State {
             DrawingElement::Rectangle {
                 position,
                 size,
+                rotation,
                 color,
                 fill,
                 stroke_width,
                 rough_style,
             } => {
+                let corners = rotated_rect_points(*position, *size, *rotation);
                 if let Some(rough_options) = rough_style {
                     // Rough style: tessellate the rough path segments
                     let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                     let rough_lines = generator.rough_rectangle(*position, *size, rough_options);
                     let style = StrokeStyle::new(*color, rough_options.stroke_width);
-                    for line_points in rough_lines {
+                    for mut line_points in rough_lines {
+                        if rotation.abs() > f32::EPSILON {
+                            let center = selection_center_from_bounds(*position, *size);
+                            rotate_points_in_place(&mut line_points, center, *rotation);
+                        }
                         let path = Path::from_points(&line_points);
                         tess.stroke(&path, &style);
                     }
+                } else if rotation.abs() > f32::EPSILON {
+                    if *fill {
+                        tess.fill_convex(&corners, *color);
+                    }
+                    tess.stroke_polygon(&corners, &StrokeStyle::new(*color, *stroke_width));
                 } else {
                     // Clean shape: SDF vector rendering
                     sdf_batch.add_rect(*position, *size, *color, *stroke_width, *fill);
@@ -269,19 +319,30 @@ impl State {
             DrawingElement::Diamond {
                 position,
                 size,
+                rotation,
                 color,
                 fill,
                 stroke_width,
                 rough_style,
             } => {
+                let points = rotated_diamond_points(*position, *size, *rotation);
                 if let Some(rough_options) = rough_style {
                     let mut generator = crate::rough::RoughGenerator::new(rough_options.seed);
                     let rough_lines = generator.rough_diamond(*position, *size, rough_options);
                     let style = StrokeStyle::new(*color, rough_options.stroke_width);
-                    for line_points in rough_lines {
+                    for mut line_points in rough_lines {
+                        if rotation.abs() > f32::EPSILON {
+                            let center = selection_center_from_bounds(*position, *size);
+                            rotate_points_in_place(&mut line_points, center, *rotation);
+                        }
                         let path = Path::from_points(&line_points);
                         tess.stroke(&path, &style);
                     }
+                } else if rotation.abs() > f32::EPSILON {
+                    if *fill {
+                        tess.fill_convex(&points, *color);
+                    }
+                    tess.stroke_polygon(&points, &StrokeStyle::new(*color, *stroke_width));
                 } else {
                     // Clean shape: SDF vector rendering
                     sdf_batch.add_diamond(*position, *size, *color, *stroke_width, *fill);
@@ -373,6 +434,17 @@ impl State {
         }
     }
 
+    fn tessellate_rotation_handle(bounds: ([f32; 2], [f32; 2]), tess: &mut PathTessellator) {
+        let top_center = [(bounds.0[0] + bounds.1[0]) * 0.5, bounds.0[1]];
+        let handle_pos = rotation_handle_position(bounds);
+        tess.add_line_segment(top_center, handle_pos, [0.0, 0.5, 1.0, 1.0], 1.5);
+
+        let radius = 6.0;
+        let points = circle_points(handle_pos, radius, 24);
+        tess.fill_convex(&points, [1.0, 1.0, 1.0, 1.0]);
+        tess.stroke_polygon(&points, &StrokeStyle::new([0.0, 0.5, 1.0, 1.0], 1.5));
+    }
+
     fn tessellate_marquee(start: [f32; 2], current: [f32; 2], tess: &mut PathTessellator) {
         let position = [start[0].min(current[0]), start[1].min(current[1])];
         let size = [(current[0] - start[0]).abs(), (current[1] - start[1]).abs()];
@@ -421,6 +493,11 @@ fn selection_bounds(elements: &[Element], ids: &[ElementId]) -> Option<([f32; 2]
     Some((min, max))
 }
 
+pub fn rotation_handle_position(bounds: ([f32; 2], [f32; 2])) -> [f32; 2] {
+    let center_x = (bounds.0[0] + bounds.1[0]) * 0.5;
+    [center_x, bounds.0[1] - 28.0]
+}
+
 pub fn handle_positions(
     bounds: ([f32; 2], [f32; 2]),
 ) -> std::collections::BTreeMap<ResizeHandle, [f32; 2]> {
@@ -438,4 +515,65 @@ pub fn handle_positions(
         (ResizeHandle::SouthWest, [min[0], max[1]]),
         (ResizeHandle::West, [min[0], center_y]),
     ])
+}
+
+fn selection_center_from_bounds(position: [f32; 2], size: [f32; 2]) -> [f32; 2] {
+    [position[0] + size[0] * 0.5, position[1] + size[1] * 0.5]
+}
+
+fn rotate_point(point: [f32; 2], center: [f32; 2], angle: f32) -> [f32; 2] {
+    let sin = angle.sin();
+    let cos = angle.cos();
+    let dx = point[0] - center[0];
+    let dy = point[1] - center[1];
+    [
+        center[0] + dx * cos - dy * sin,
+        center[1] + dx * sin + dy * cos,
+    ]
+}
+
+fn rotate_points_in_place(points: &mut [[f32; 2]], center: [f32; 2], angle: f32) {
+    for point in points {
+        *point = rotate_point(*point, center, angle);
+    }
+}
+
+fn rotated_rect_points(position: [f32; 2], size: [f32; 2], rotation: f32) -> [[f32; 2]; 4] {
+    let center = selection_center_from_bounds(position, size);
+    let mut corners = [
+        position,
+        [position[0] + size[0], position[1]],
+        [position[0] + size[0], position[1] + size[1]],
+        [position[0], position[1] + size[1]],
+    ];
+    if rotation.abs() > f32::EPSILON {
+        rotate_points_in_place(&mut corners, center, rotation);
+    }
+    corners
+}
+
+fn rotated_diamond_points(position: [f32; 2], size: [f32; 2], rotation: f32) -> [[f32; 2]; 4] {
+    let center = selection_center_from_bounds(position, size);
+    let mut points = [
+        [center[0], position[1]],
+        [position[0] + size[0], center[1]],
+        [center[0], position[1] + size[1]],
+        [position[0], center[1]],
+    ];
+    if rotation.abs() > f32::EPSILON {
+        rotate_points_in_place(&mut points, center, rotation);
+    }
+    points
+}
+
+fn circle_points(center: [f32; 2], radius: f32, segments: usize) -> Vec<[f32; 2]> {
+    let mut points = Vec::with_capacity(segments);
+    for i in 0..segments {
+        let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
+        points.push([
+            center[0] + angle.cos() * radius,
+            center[1] + angle.sin() * radius,
+        ]);
+    }
+    points
 }

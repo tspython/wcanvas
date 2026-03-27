@@ -105,6 +105,7 @@ mod tests {
                 shape: DrawingElement::Rectangle {
                     position: [50.0, 50.0],
                     size: [200.0, 100.0],
+                    rotation: 0.0,
                     color: [0.0, 1.0, 0.0, 1.0],
                     fill: true,
                     stroke_width: 1.5,
@@ -129,6 +130,7 @@ mod tests {
                 shape: DrawingElement::Diamond {
                     position: [300.0, 100.0],
                     size: [80.0, 60.0],
+                    rotation: 0.0,
                     color: [1.0, 1.0, 0.0, 1.0],
                     fill: false,
                     stroke_width: 2.5,

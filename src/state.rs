@@ -18,6 +18,7 @@ pub enum UserInputState {
     Drawing,
     Dragging,
     Resizing,
+    Rotating,
     MarqueeSelecting,
 }
 
@@ -68,6 +69,8 @@ pub struct SelectionState {
     pub marquee_current: Option<[f32; 2]>,
     pub drag_origin: Option<[f32; 2]>,
     pub resize_bounds: Option<([f32; 2], [f32; 2])>,
+    pub rotate_pivot: Option<[f32; 2]>,
+    pub rotate_start_angle: Option<f32>,
     pub last_clicked: Option<(ElementId, Instant)>,
 }
 
@@ -80,6 +83,8 @@ impl SelectionState {
             marquee_current: None,
             drag_origin: None,
             resize_bounds: None,
+            rotate_pivot: None,
+            rotate_start_angle: None,
             last_clicked: None,
         }
     }
@@ -91,6 +96,8 @@ impl SelectionState {
         self.marquee_current = None;
         self.drag_origin = None;
         self.resize_bounds = None;
+        self.rotate_pivot = None;
+        self.rotate_start_angle = None;
     }
 
     pub fn is_selected(&self, id: ElementId) -> bool {

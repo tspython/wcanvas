@@ -50,6 +50,13 @@ pub struct State {
     pub current_file_path: Option<String>,
     /// Document name for display.
     pub document_name: String,
+
+    #[cfg(debug_assertions)]
+    pub fps_sample_start: Instant,
+    #[cfg(debug_assertions)]
+    pub fps_sample_frames: u32,
+    #[cfg(debug_assertions)]
+    pub fps_value: f32,
 }
 
 impl State {
@@ -431,6 +438,12 @@ impl State {
             ui_screen,
             current_file_path: None,
             document_name: "Untitled".to_string(),
+            #[cfg(debug_assertions)]
+            fps_sample_start: Instant::now(),
+            #[cfg(debug_assertions)]
+            fps_sample_frames: 0,
+            #[cfg(debug_assertions)]
+            fps_value: 0.0,
         }
     }
 
