@@ -1,5 +1,69 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Fill style for shape primitives, following Excalidraw's approach.
+///
+/// - `None`: No fill (stroke only)
+/// - `Solid`: Solid color fill
+/// - `Hachure`: Parallel sketchy lines at an angle (default Excalidraw style)
+/// - `CrossHatch`: Two sets of hachure lines at perpendicular angles
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum FillStyle {
+    None,
+    Solid,
+    Hachure,
+    CrossHatch,
+}
+
+impl FillStyle {
+    /// Cycle to the next fill style: None -> Hachure -> CrossHatch -> Solid -> None
+    pub fn next(self) -> Self {
+        match self {
+            FillStyle::None => FillStyle::Hachure,
+            FillStyle::Hachure => FillStyle::CrossHatch,
+            FillStyle::CrossHatch => FillStyle::Solid,
+            FillStyle::Solid => FillStyle::None,
+        }
+    }
+
+    pub fn is_filled(self) -> bool {
+        self != FillStyle::None
+    }
+}
+
+/// Custom deserializer that handles both old `fill: bool` and new `fill_style: "Hachure"` formats.
+pub fn deserialize_fill_style<'de, D>(deserializer: D) -> Result<FillStyle, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+
+    struct FillStyleVisitor;
+
+    impl<'de> de::Visitor<'de> for FillStyleVisitor {
+        type Value = FillStyle;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a FillStyle string or a boolean")
+        }
+
+        fn visit_bool<E: de::Error>(self, v: bool) -> Result<FillStyle, E> {
+            Ok(if v { FillStyle::Solid } else { FillStyle::None })
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<FillStyle, E> {
+            match v {
+                "None" => Ok(FillStyle::None),
+                "Solid" => Ok(FillStyle::Solid),
+                "Hachure" => Ok(FillStyle::Hachure),
+                "CrossHatch" => Ok(FillStyle::CrossHatch),
+                _ => Err(de::Error::unknown_variant(v, &["None", "Solid", "Hachure", "CrossHatch"])),
+            }
+        }
+    }
+
+    deserializer.deserialize_any(FillStyleVisitor)
+}
 
 static NEXT_ELEMENT_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_GROUP_ID: AtomicU64 = AtomicU64::new(1);
@@ -105,7 +169,8 @@ pub enum DrawingElement {
         position: [f32; 2],
         size: [f32; 2],
         color: [f32; 4],
-        fill: bool,
+        #[serde(deserialize_with = "deserialize_fill_style", alias = "fill")]
+        fill_style: FillStyle,
         stroke_width: f32,
         rough_style: Option<crate::rough::RoughOptions>,
     },
@@ -113,7 +178,8 @@ pub enum DrawingElement {
         center: [f32; 2],
         radius: f32,
         color: [f32; 4],
-        fill: bool,
+        #[serde(deserialize_with = "deserialize_fill_style", alias = "fill")]
+        fill_style: FillStyle,
         stroke_width: f32,
         rough_style: Option<crate::rough::RoughOptions>,
     },
@@ -121,7 +187,8 @@ pub enum DrawingElement {
         position: [f32; 2],
         size: [f32; 2],
         color: [f32; 4],
-        fill: bool,
+        #[serde(deserialize_with = "deserialize_fill_style", alias = "fill")]
+        fill_style: FillStyle,
         stroke_width: f32,
         rough_style: Option<crate::rough::RoughOptions>,
     },
@@ -176,24 +243,33 @@ impl DrawingElement {
         }
     }
 
-    pub fn set_fill(&mut self, fill: bool) -> bool {
+    pub fn fill_style(&self) -> Option<FillStyle> {
         match self {
-            DrawingElement::Rectangle { fill: value, .. }
-            | DrawingElement::Circle { fill: value, .. }
-            | DrawingElement::Diamond { fill: value, .. } => {
-                *value = fill;
+            DrawingElement::Rectangle { fill_style, .. }
+            | DrawingElement::Circle { fill_style, .. }
+            | DrawingElement::Diamond { fill_style, .. } => Some(*fill_style),
+            _ => None,
+        }
+    }
+
+    pub fn set_fill_style(&mut self, style: FillStyle) -> bool {
+        match self {
+            DrawingElement::Rectangle { fill_style, .. }
+            | DrawingElement::Circle { fill_style, .. }
+            | DrawingElement::Diamond { fill_style, .. } => {
+                *fill_style = style;
                 true
             }
             _ => false,
         }
     }
 
-    pub fn toggle_fill(&mut self) -> bool {
+    pub fn cycle_fill_style(&mut self) -> bool {
         match self {
-            DrawingElement::Rectangle { fill, .. }
-            | DrawingElement::Circle { fill, .. }
-            | DrawingElement::Diamond { fill, .. } => {
-                *fill = !*fill;
+            DrawingElement::Rectangle { fill_style, .. }
+            | DrawingElement::Circle { fill_style, .. }
+            | DrawingElement::Diamond { fill_style, .. } => {
+                *fill_style = fill_style.next();
                 true
             }
             _ => false,

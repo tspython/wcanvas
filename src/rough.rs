@@ -499,6 +499,147 @@ impl RoughGenerator {
         (vertices, indices)
     }
 
+    /// Generate hachure fill lines for a polygon using a scanline algorithm.
+    ///
+    /// This follows the Excalidraw/RoughJS approach:
+    /// 1. Rotate the polygon by -hachure_angle so scanlines become horizontal
+    /// 2. Cast horizontal scanlines at `gap` intervals
+    /// 3. Find intersection points with polygon edges
+    /// 4. Connect pairs of intersections to form fill lines
+    /// 5. Rotate the resulting lines back by +hachure_angle
+    ///
+    /// Each fill line gets slight roughness applied for the hand-drawn look.
+    pub fn hachure_fill(
+        &mut self,
+        polygon: &[[f32; 2]],
+        hachure_angle: f32,
+        gap: f32,
+        fill_weight: f32,
+        options: &RoughOptions,
+    ) -> Vec<Vec<[f32; 2]>> {
+        if polygon.len() < 3 || gap <= 0.0 {
+            return Vec::new();
+        }
+
+        let angle_rad = -hachure_angle.to_radians();
+        let cos_a = angle_rad.cos();
+        let sin_a = angle_rad.sin();
+
+        // Rotate polygon so we can use horizontal scanlines
+        let rotated: Vec<[f32; 2]> = polygon
+            .iter()
+            .map(|p| rotate_point(*p, cos_a, sin_a))
+            .collect();
+
+        // Find vertical extent of rotated polygon
+        let mut min_y = f32::MAX;
+        let mut max_y = f32::MIN;
+        for p in &rotated {
+            min_y = min_y.min(p[1]);
+            max_y = max_y.max(p[1]);
+        }
+
+        let mut lines = Vec::new();
+        let cos_back = (-angle_rad).cos();
+        let sin_back = (-angle_rad).sin();
+
+        // Cast horizontal scanlines at regular intervals
+        let mut y = min_y + gap;
+        while y < max_y {
+            // Find intersections with polygon edges
+            let mut intersections = Vec::new();
+            let n = rotated.len();
+            for i in 0..n {
+                let p1 = rotated[i];
+                let p2 = rotated[(i + 1) % n];
+
+                if (p1[1] <= y && p2[1] > y) || (p2[1] <= y && p1[1] > y) {
+                    let t = (y - p1[1]) / (p2[1] - p1[1]);
+                    let x = p1[0] + t * (p2[0] - p1[0]);
+                    intersections.push(x);
+                }
+            }
+
+            intersections.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+            // Connect pairs of intersections
+            let mut i = 0;
+            while i + 1 < intersections.len() {
+                let x1 = intersections[i];
+                let x2 = intersections[i + 1];
+
+                // Rotate the line endpoints back to original space
+                let start = rotate_point([x1, y], cos_back, sin_back);
+                let end = rotate_point([x2, y], cos_back, sin_back);
+
+                // Apply roughness to the fill line
+                if options.roughness > 0.0 {
+                    let rough_line = self.rough_fill_line(start, end, options, fill_weight);
+                    lines.push(rough_line);
+                } else {
+                    lines.push(vec![start, end]);
+                }
+
+                i += 2;
+            }
+
+            y += gap;
+        }
+
+        lines
+    }
+
+    /// Generate cross-hatch fill: hachure at angle θ, then again at θ+90°.
+    pub fn cross_hatch_fill(
+        &mut self,
+        polygon: &[[f32; 2]],
+        hachure_angle: f32,
+        gap: f32,
+        fill_weight: f32,
+        options: &RoughOptions,
+    ) -> Vec<Vec<[f32; 2]>> {
+        let mut lines = self.hachure_fill(polygon, hachure_angle, gap, fill_weight, options);
+        let lines2 = self.hachure_fill(polygon, hachure_angle + 90.0, gap, fill_weight, options);
+        lines.extend(lines2);
+        lines
+    }
+
+    /// Generate a rough fill line (less jitter than stroke lines, thinner).
+    fn rough_fill_line(
+        &mut self,
+        start: [f32; 2],
+        end: [f32; 2],
+        options: &RoughOptions,
+        _fill_weight: f32,
+    ) -> Vec<[f32; 2]> {
+        let dx = end[0] - start[0];
+        let dy = end[1] - start[1];
+        let length = (dx * dx + dy * dy).sqrt();
+
+        if length < 1.0 {
+            return vec![start, end];
+        }
+
+        // Lighter roughness for fill lines (matching Excalidraw behavior)
+        let roughness = options.roughness * 0.5;
+        let offset = (options.max_randomness_offset * 0.3).min(length * 0.1);
+
+        let start_offset_x = self.random() * offset * roughness - offset * roughness * 0.5;
+        let start_offset_y = self.random() * offset * roughness - offset * roughness * 0.5;
+        let end_offset_x = self.random() * offset * roughness - offset * roughness * 0.5;
+        let end_offset_y = self.random() * offset * roughness - offset * roughness * 0.5;
+
+        let mid_offset = roughness * options.bowing * 0.5;
+        let mid_x = (start[0] + end[0]) * 0.5 + (self.random() - 0.5) * mid_offset;
+        let mid_y = (start[1] + end[1]) * 0.5 + (self.random() - 0.5) * mid_offset;
+
+        vec![
+            [start[0] + start_offset_x, start[1] + start_offset_y],
+            [mid_x, mid_y],
+            [end[0] + end_offset_x, end[1] + end_offset_y],
+        ]
+    }
+
     pub fn rough_arrow(
         &mut self,
         start: [f32; 2],
@@ -551,4 +692,9 @@ impl RoughGenerator {
 
         lines
     }
+}
+
+/// Rotate a 2D point around the origin.
+fn rotate_point(p: [f32; 2], cos: f32, sin: f32) -> [f32; 2] {
+    [p[0] * cos - p[1] * sin, p[0] * sin + p[1] * cos]
 }
